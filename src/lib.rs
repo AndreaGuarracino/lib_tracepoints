@@ -228,7 +228,7 @@ pub fn cigar_to_banded_tracepoints(
 /// @param gap_open2: Penalty for opening a gap (second gap type)
 /// @param gap_ext2: Penalty for extending a gap (second gap type)
 /// @return Reconstructed CIGAR string
-pub fn cigar_from_tracepoints(
+pub fn tracepoints_to_cigar(
     tracepoints: &[(usize, usize)],
     a_seq: &str,
     b_seq: &str,
@@ -276,7 +276,7 @@ pub fn cigar_from_tracepoints(
 
 /// Reconstruct a CIGAR string from banded tracepoints.
 /// 
-/// Similar to cigar_from_tracepoints but utilizes the diagonal boundary
+/// Similar to tracepoints_to_cigar but utilizes the diagonal boundary
 /// information to constrain the WFA alignment search space. This improves performance
 /// by limiting the search to the banded region where the alignment is expected to be found.
 /// 
@@ -291,7 +291,7 @@ pub fn cigar_from_tracepoints(
 /// @param gap_open2: Penalty for opening a gap (second gap type)
 /// @param gap_ext2: Penalty for extending a gap (second gap type)
 /// @return Reconstructed CIGAR string
-pub fn cigar_from_banded_tracepoints(
+pub fn banded_tracepoints_to_cigar(
     tracepoints: &[(usize, usize, (isize, isize))],
     a_seq: &str,
     b_seq: &str,
@@ -695,7 +695,7 @@ mod tests {
         
         // Test basic tracepoints
         let tracepoints = cigar_to_tracepoints(&original_cigar, max_diff);
-        let basic_cigar = cigar_from_tracepoints(
+        let basic_cigar = tracepoints_to_cigar(
             &tracepoints,
             a_seq, b_seq, 
             0, 0,  // sequences and start positions
@@ -704,8 +704,8 @@ mod tests {
         assert_eq!(basic_cigar, original_cigar, "Basic implementation failed");
         
         // Test banded tracepoints
-        let banded_tracepoints = cigar_to_banded_tracepoints(&original_cigar, max_diff);
-        let banded_cigar = cigar_from_banded_tracepoints(
+        let banded_tracepoints: Vec<(usize, usize, (isize, isize))> = cigar_to_banded_tracepoints(&original_cigar, max_diff);
+        let banded_cigar = banded_tracepoints_to_cigar(
             &banded_tracepoints,
             a_seq, b_seq, 
             0, 0,  // sequences and start positions

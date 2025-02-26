@@ -230,8 +230,8 @@ pub fn cigar_to_banded_tracepoints(
 /// @return Reconstructed CIGAR string
 pub fn tracepoints_to_cigar(
     tracepoints: &[(usize, usize)],
-    a_seq: &str,
-    b_seq: &str,
+    a_seq: &[u8],
+    b_seq: &[u8],
     a_start: usize,
     b_start: usize,
     mismatch: i32,
@@ -293,8 +293,8 @@ pub fn tracepoints_to_cigar(
 /// @return Reconstructed CIGAR string
 pub fn banded_tracepoints_to_cigar(
     tracepoints: &[(usize, usize, (isize, isize))],
-    a_seq: &str,
-    b_seq: &str,
+    a_seq: &[u8],
+    b_seq: &[u8],
     a_start: usize,
     b_start: usize,
     mismatch: i32,
@@ -429,12 +429,12 @@ fn cigar_ops_to_cigar_string(ops: &[(usize, char)]) -> String {
 /// @param aligner: Configured WFA aligner
 /// @return Vector of CIGAR operations for the alignment
 fn align_sequences_wfa(
-    a: &str, 
-    b: &str,
+    a: &[u8],
+    b: &[u8],
     aligner: &mut AffineWavefronts
 ) -> Vec<(usize, char)> {   
     // Do the alignment b vs a (it is not a typo) to have insertions/deletions in the query as Is/Ds in the CIGAR string
-    let status = aligner.align(b.as_bytes(), a.as_bytes());
+    let status = aligner.align(b, a);
     
     match status {
         AlignmentStatus::Completed => {
@@ -689,8 +689,8 @@ mod tests {
     #[test]
     fn test_cigar_roundtrip() {
         let original_cigar = "1=1I18=";
-        let a_seq = "ACGTACGTACACGTACGTAC";  // 20 bases
-        let b_seq = "AGTACGTACACGTACGTAC";   // 19 bases (missing C)
+        let a_seq = b"ACGTACGTACACGTACGTAC";  // 20 bases
+        let b_seq = b"AGTACGTACACGTACGTAC";   // 19 bases (missing C)
         let max_diff = 5;
         
         // Test basic tracepoints

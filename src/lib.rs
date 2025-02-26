@@ -1,14 +1,20 @@
 use std::cmp::min;
 use lib_wfa2::affine_wavefront::{AffineWavefronts, AlignmentStatus, HeuristicStrategy};
 
-/// Convert a CIGAR string into variable–delta tracepoints.
-/// Instead of using fixed A–intervals, we accumulate bases (and differences)
-/// until we reach a diff threshold of max_diff. For match-like ops ('=', 'M', and 'X'),
-/// we split as needed so that the diff count never exceeds max_diff.
-/// For indels ('I' and 'D'), we incorporate them into the current tracepoint
-/// if they are short enough. If adding the indel would exceed the threshold,
-/// we flush the current segment. Indels are unsplittable.
-pub fn cigar_to_tracepoints_variable(
+/// Convert a CIGAR string into tracepoints.
+/// 
+/// This function segments a CIGAR string into tracepoints where each segment contains
+/// at most `max_diff` differences (mismatches or indels). Match operations ('=' and 'M') 
+/// don't count as differences. Key features:
+/// 
+/// - Mismatch operations ('X') can be split across segments if needed
+/// - Indels ('I', 'D') are kept intact within a single segment when possible
+/// - Long indels exceeding max_diff become their own segments
+/// 
+/// @param cigar: The CIGAR string to process
+/// @param max_diff: Maximum number of differences allowed in each segment
+/// @return Vector of tracepoints, each containing (a_segment_length, b_segment_length)
+pub fn cigar_to_tracepoints(
     cigar: &str,
     max_diff: usize,
 ) -> Vec<(usize, usize)> {
@@ -90,7 +96,16 @@ pub fn cigar_to_tracepoints_variable(
     tracepoints
 }
 
-pub fn cigar_to_tracepoints_variable2(
+/// Convert a CIGAR string into tracepoints with diagonal tracking.
+/// 
+/// Similar to cigar_to_tracepoints but adds diagonal boundary tracking.
+/// The diagonal position tracks the relative offset between sequences and helps
+/// optimize subsequent alignment by constraining the search space.
+/// 
+/// @param cigar: The CIGAR string to process
+/// @param max_diff: Maximum number of differences allowed in each segment
+/// @return Vector of tracepoints with diagonal boundaries: (a_len, b_len, (min_diagonal, max_diagonal))
+pub fn cigar_to_banded_tracepoints(
     cigar: &str,
     max_diff: usize,
 ) -> Vec<(usize, usize, (isize, isize))> {
@@ -194,12 +209,26 @@ pub fn cigar_to_tracepoints_variable2(
     tracepoints
 }
 
-
-/// Reconstruct a CIGAR string from variable-delta tracepoints.
-/// For each tracepoint, we simply generate an insertion or deletion op by
-/// inspecting the saved A and B bases. /// Otherwise, we realign the
-/// corresponding segments using either heuristic or full WFA alignment.
-pub fn tracepoints_to_cigar_variable(
+/// Reconstruct a CIGAR string from tracepoints.
+/// 
+/// For each tracepoint pair, this function performs a detailed alignment of the corresponding
+/// sequence segments using WFA alignment. Special cases are handled efficiently:
+/// - Pure insertions (a_len > 0, b_len = 0) are directly converted to 'I' operations
+/// - Pure deletions (a_len = 0, b_len > 0) are directly converted to 'D' operations
+/// - Mixed segments are realigned using the WFA algorithm
+/// 
+/// @param tracepoints: Vector of (a_len, b_len) pairs defining segment boundaries
+/// @param a_seq: Reference sequence string
+/// @param b_seq: Query sequence string
+/// @param a_start: Starting position in reference sequence
+/// @param b_start: Starting position in query sequence
+/// @param mismatch: Penalty for mismatches
+/// @param gap_open1: Penalty for opening a gap (first gap type)
+/// @param gap_ext1: Penalty for extending a gap (first gap type)
+/// @param gap_open2: Penalty for opening a gap (second gap type)
+/// @param gap_ext2: Penalty for extending a gap (second gap type)
+/// @return Reconstructed CIGAR string
+pub fn cigar_from_tracepoints(
     tracepoints: &[(usize, usize)],
     a_seq: &str,
     b_seq: &str,
@@ -245,7 +274,24 @@ pub fn tracepoints_to_cigar_variable(
     cigar_ops_to_cigar_string(&merged)
 }
 
-pub fn tracepoints_to_cigar_variable2(
+/// Reconstruct a CIGAR string from banded tracepoints.
+/// 
+/// Similar to cigar_from_tracepoints but utilizes the diagonal boundary
+/// information to constrain the WFA alignment search space. This improves performance
+/// by limiting the search to the banded region where the alignment is expected to be found.
+/// 
+/// @param tracepoints: Vector of (a_len, b_len, (min_diagonal, max_diagonal)) triples
+/// @param a_seq: Reference sequence string
+/// @param b_seq: Query sequence string
+/// @param a_start: Starting position in reference sequence
+/// @param b_start: Starting position in query sequence
+/// @param mismatch: Penalty for mismatches
+/// @param gap_open1: Penalty for opening a gap (first gap type)
+/// @param gap_ext1: Penalty for extending a gap (first gap type)
+/// @param gap_open2: Penalty for opening a gap (second gap type)
+/// @param gap_ext2: Penalty for extending a gap (second gap type)
+/// @return Reconstructed CIGAR string
+pub fn cigar_from_banded_tracepoints(
     tracepoints: &[(usize, usize, (isize, isize))],
     a_seq: &str,
     b_seq: &str,
@@ -295,19 +341,10 @@ pub fn tracepoints_to_cigar_variable2(
 
 // Helper functions
 
-/// With the inverted logic, a is consumed by insertions:
-/// so =, X, and I (and M) consume A.
-fn consumes_a(op: char) -> bool {
-    op == '=' || op == 'X' || op == 'I' || op == 'M'
-}
-
-/// With the inverted logic, b is consumed by deletions:
-/// so =, X, and D (and M) consume B.
-fn consumes_b(op: char) -> bool {
-    op == '=' || op == 'X' || op == 'D' || op == 'M'
-}
-
-/// Helper: Merge two vectors of CIGAR operations (merging adjacent ops of the same kind).
+/// Merge consecutive CIGAR operations of the same type.
+/// 
+/// @param ops: Vector of (length, operation) pairs
+/// @return Vector with adjacent identical operations combined
 fn merge_cigar_ops(ops: Vec<(usize, char)>) -> Vec<(usize, char)> {
     if ops.is_empty() {
         return ops;
@@ -327,7 +364,10 @@ fn merge_cigar_ops(ops: Vec<(usize, char)>) -> Vec<(usize, char)> {
     merged
 }
 
-/// Parse a CIGAR string into a vector of (length, op) pairs.
+/// Parse a CIGAR string into a vector of (length, operation) pairs.
+/// 
+/// @param cigar: CIGAR string (e.g., "10M2D5M")
+/// @return Vector of (length, operation) pairs
 fn cigar_str_to_cigar_ops(cigar: &str) -> Vec<(usize, char)> {
     let mut ops = Vec::new();
     let mut num = String::new();
@@ -344,6 +384,11 @@ fn cigar_str_to_cigar_ops(cigar: &str) -> Vec<(usize, char)> {
     ops
 }
 
+/// Convert a byte array of CIGAR operations into a vector of (length, operation) pairs.
+/// Handles the special case of 'M' (77 in ASCII) being treated as '='.
+/// 
+/// @param ops: Byte array of CIGAR operations
+/// @return Vector of (length, operation) pairs
 fn cigar_u8_to_cigar_ops(ops: &[u8]) -> Vec<(usize, char)> {
     let mut result = Vec::new();
     let mut count = 1;
@@ -366,7 +411,10 @@ fn cigar_u8_to_cigar_ops(ops: &[u8]) -> Vec<(usize, char)> {
     result
 }
 
-/// Convert a vector of (length, op) pairs to a CIGAR string.
+/// Format a vector of CIGAR operations as a standard CIGAR string.
+/// 
+/// @param ops: Vector of (length, operation) pairs
+/// @return Formatted CIGAR string (e.g., "10M2D5M")
 fn cigar_ops_to_cigar_string(ops: &[(usize, char)]) -> String {
     ops.iter()
         .map(|(len, op)| format!("{}{}", len, op))
@@ -374,6 +422,12 @@ fn cigar_ops_to_cigar_string(ops: &[(usize, char)]) -> String {
         .join("")
 }
 
+/// Align two sequence segments using WFA algorithm.
+/// 
+/// @param a: Reference sequence segment
+/// @param b: Query sequence segment
+/// @param aligner: Configured WFA aligner
+/// @return Vector of CIGAR operations for the alignment
 fn align_sequences_wfa(
     a: &str, 
     b: &str,
@@ -391,6 +445,18 @@ fn align_sequences_wfa(
         }
     }
 }
+
+// /// With the inverted logic, a is consumed by insertions:
+// /// so =, X, and I (and M) consume A.
+// fn consumes_a(op: char) -> bool {
+//     op == '=' || op == 'X' || op == 'I' || op == 'M'
+// }
+
+// /// With the inverted logic, b is consumed by deletions:
+// /// so =, X, and D (and M) consume B.
+// fn consumes_b(op: char) -> bool {
+//     op == '=' || op == 'X' || op == 'D' || op == 'M'
+// }
 
 // /// Convert a CIGAR string into tracepoints.
 // /// Given:
@@ -568,40 +634,83 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_works() {
+    fn test_tracepoint_generation() {
+        // Test CIGAR string
         let cigar = "10M2D5M2I3M";
-
-        let tracepoints = cigar_to_tracepoints_variable(&cigar, 0);
-        assert_eq!(tracepoints, vec![(10, 10), (0, 2), (5, 5), (2, 0), (3, 3)]);
-
-        let tracepoints = cigar_to_tracepoints_variable(&cigar, 2);
-        assert_eq!(tracepoints, vec![(15, 17), (5, 3)]);
-
-        let tracepoints = cigar_to_tracepoints_variable(&cigar, 5);
-        assert_eq!(tracepoints, vec![(20, 20)]);
+        
+        // Define test cases: (max_diff, expected_tracepoints, expected_banded_tracepoints)
+        let test_cases = vec![
+            // Case 1: No differences allowed - each operation becomes its own segment
+            (0, 
+             vec![(10, 10), (0, 2), (5, 5), (2, 0), (3, 3)],
+             vec![(10, 10, (0, 0)), (0, 2, (2, 0)), (5, 5, (0, 0)), (2, 0, (0, 2)), (3, 3, (0, 0))]),
+            
+            // Case 2: Allow up to 2 differences in each segment
+            (2,
+             vec![(15, 17), (5, 3)],
+             vec![(15, 17, (-2, 0)), (5, 3, (0, 2))]),
+            
+            // Case 3: Allow up to 5 differences - combines all operations
+            (5,
+             vec![(20, 20)],
+             vec![(20, 20, (-2, 0))])
+        ];
+        
+        // Run each test case
+        for (i, (max_diff, expected_tracepoints, expected_banded_tracepoints)) in test_cases.iter().enumerate() {
+            // Get actual results
+            let tracepoints = cigar_to_tracepoints(&cigar, *max_diff);
+            let banded_tracepoints = cigar_to_banded_tracepoints(&cigar, *max_diff);
+            
+            // Check basic tracepoints
+            assert_eq!(tracepoints, *expected_tracepoints,
+                       "Test case {}: Basic tracepoints with max_diff={} incorrect", i+1, max_diff);
+                       
+            // Check banded tracepoints
+            assert_eq!(banded_tracepoints, *expected_banded_tracepoints,
+                       "Test case {}: Banded tracepoints with max_diff={} incorrect", i+1, max_diff);
+            
+            // Verify both implementations are consistent in terms of segment lengths
+            assert_eq!(tracepoints.len(), banded_tracepoints.len(), 
+                       "Test case {}: Implementations should produce the same number of segments", i+1);
+            
+            for (j, ((a_len, b_len), (a_len_banded, b_len_banded, _))) in 
+                tracepoints.iter().zip(banded_tracepoints.iter()).enumerate() {
+                assert_eq!(
+                    (a_len, b_len), 
+                    (a_len_banded, b_len_banded),
+                    "Test case {}, segment {}: Length mismatch - Standard: ({}, {}) vs Banded: ({}, {})",
+                    i+1, j, a_len, b_len, a_len_banded, b_len_banded
+                );
+            }
+        }
     }
 
     #[test]
-    fn xxx() {
-        let cigar = "1=1I18=";
-        let tracepoints = cigar_to_tracepoints_variable(&cigar, 5);
+    fn test_cigar_roundtrip() {
+        let original_cigar = "1=1I18=";
+        let a_seq = "ACGTACGTACACGTACGTAC";  // 20 bases
+        let b_seq = "AGTACGTACACGTACGTAC";   // 19 bases (missing C)
+        let max_diff = 5;
         
-        // Reconstruct CIGAR from tracepoints
-        let a_seq = "ACGTACGTACACGTACGTAC";
-        let b_seq = "AGTACGTACACGTACGTAC";
-        let reconstructed_cigar = tracepoints_to_cigar_variable(
+        // Test basic tracepoints
+        let tracepoints = cigar_to_tracepoints(&original_cigar, max_diff);
+        let basic_cigar = cigar_from_tracepoints(
             &tracepoints,
-            a_seq,
-            b_seq,
-            0,  // a_start
-            0,  // b_start
-            2,  // mismatch penalty
-            4,  // gap_open1
-            2,  // gap_ext1
-            6,  // gap_open2
-            1,  // gap_ext2
+            a_seq, b_seq, 
+            0, 0,  // sequences and start positions
+            2, 4, 2, 6, 1        // alignment penalties
         );
-
-        assert_eq!(reconstructed_cigar, cigar);
+        assert_eq!(basic_cigar, original_cigar, "Basic implementation failed");
+        
+        // Test banded tracepoints
+        let banded_tracepoints = cigar_to_banded_tracepoints(&original_cigar, max_diff);
+        let banded_cigar = cigar_from_banded_tracepoints(
+            &banded_tracepoints,
+            a_seq, b_seq, 
+            0, 0,  // sequences and start positions
+            2, 4, 2, 6, 1        // alignment penalties
+        );
+        assert_eq!(banded_cigar, original_cigar, "Banded implementation failed");
     }
 }

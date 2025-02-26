@@ -1,0 +1,14 @@
+[package]
+name = "lib_tracepoints"
+version = "0.1.0"
+edition = "2021"
+authors = ["Andrea Guarracino <aguarra1@uthsc.edu>"]
+license = "MIT"
+description = "Compressed alignment representation"
+repository = "https://github.com/AndreaGuarracino/lib_tracepoints"
+readme = "README.md"
+keywords = ["bioinformatics", "alignment", "compression"]
+categories = ["science"]
+
+[dependencies]
+lib_wfa2 = { git = "https://github.com/AndreaGuarracino/lib_wfa2", rev = "c608c436a6753d2c21c97d9f5c338efae99d042b"}

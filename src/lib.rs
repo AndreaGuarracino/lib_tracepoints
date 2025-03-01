@@ -159,11 +159,13 @@ pub fn cigar_to_double_band_tracepoints(
                         max_diagonal = 0;
                         //max_gap = 0;
                     }
+                    // In this case diagonals are ignored during reconstruction, so
+                    // we save 0s to save space (less digits in the output PAF file) 
                     if op == 'I' {
-                        tracepoints.push((len, 0, (0, len as isize)));
+                        tracepoints.push((len, 0, (0, 0)));
                     } else {
                         // op == 'D'
-                        tracepoints.push((0, len, (-(len as isize), 0)));
+                        tracepoints.push((0, len, (0, 0)));
                     }
                 } else {
                     // If adding this indel would push the diff over the threshold, flush first.
@@ -353,7 +355,7 @@ pub fn double_band_tracepoints_to_cigar(
         } else {
             let a_end = current_a + a_len;
             let b_end = current_b + b_len;
-            aligner.set_heuristic(&HeuristicStrategy::BandedStatic { band_min_k: (min_k - 1) as i32, band_max_k: (max_k + 1) as i32 });
+            aligner.set_heuristic(&HeuristicStrategy::BandedStatic { band_min_k: (2*min_k - 1) as i32, band_max_k: (2*max_k + 1) as i32 });
             let seg_ops = align_sequences_wfa(
                 &a_seq[current_a..a_end],
                 &b_seq[current_b..b_end],
@@ -417,7 +419,7 @@ pub fn single_band_tracepoints_to_cigar(
         } else {
             let a_end = current_a + a_len;
             let b_end = current_b + b_len;
-            aligner.set_heuristic(&HeuristicStrategy::BandedStatic { band_min_k: -(max_abs_k as i32) - 1, band_max_k: (max_abs_k + 1) as i32 });
+            aligner.set_heuristic(&HeuristicStrategy::BandedStatic { band_min_k: -(2*max_abs_k as i32) - 1, band_max_k: (2*max_abs_k + 1) as i32 });
             let seg_ops = align_sequences_wfa(
                 &a_seq[current_a..a_end],
                 &b_seq[current_b..b_end],
@@ -736,8 +738,8 @@ mod tests {
             // Case 1: No differences allowed - each operation becomes its own segment
             (0, 
              vec![(10, 10), (0, 2), (5, 5), (2, 0), (3, 3)],
-             vec![(10, 10, (0, 0)), (0, 2, (-2, 0)), (5, 5, (0, 0)), (2, 0, (0, 2)), (3, 3, (0, 0))],
-             vec![(10, 10, 0), (0, 2, 2), (5, 5, 0), (2, 0, 2), (3, 3, 0)]),
+             vec![(10, 10, (0, 0)), (0, 2, (0, 0)), (5, 5, (0, 0)), (2, 0, (0, 0)), (3, 3, (0, 0))],
+             vec![(10, 10, 0), (0, 2, 0), (5, 5, 0), (2, 0, 0), (3, 3, 0)]),
             
             // Case 2: Allow up to 2 differences in each segment
             (2,

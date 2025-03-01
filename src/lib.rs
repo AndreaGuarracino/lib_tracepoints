@@ -234,8 +234,6 @@ pub fn cigar_to_single_band_tracepoints(
                .map(|(a_len, b_len, (min_k, max_k))| {
                     // Take the maximum absolute value of the diagonals
                     let max_abs_k = std::cmp::max(-min_k, max_k) as usize;
-                    println!("min_k: {}, max_k: {}", min_k, max_k);
-                    println!("max_abs_k: {}", max_abs_k);
                     (a_len, b_len, max_abs_k)
                })
                .collect()

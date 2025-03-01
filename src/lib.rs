@@ -731,7 +731,7 @@ mod tests {
         // Test CIGAR string
         let cigar = "10M2D5M2I3M";
         
-        // Define test cases: (max_diff, expected_tracepoints, expected_banded_tracepoints, expected_symmetric_tracepoints)
+        // Define test cases: (max_diff, expected_tracepoints, expected_double_band_tracepoints, expected_single_band_tracepoints)
         let test_cases = vec![
             // Case 1: No differences allowed - each operation becomes its own segment
             (0, 
@@ -753,46 +753,46 @@ mod tests {
         ];
         
         // Run each test case
-        for (i, (max_diff, expected_tracepoints, expected_banded_tracepoints, expected_symmetric_tracepoints)) in test_cases.iter().enumerate() {
+        for (i, (max_diff, expected_tracepoints, expected_double_band_tracepoints, expected_single_band_tracepoints)) in test_cases.iter().enumerate() {
             // Get actual results
             let tracepoints = cigar_to_tracepoints(&cigar, *max_diff);
-            let banded_tracepoints = cigar_to_banded_tracepoints(&cigar, *max_diff);
-            let symmetric_tracepoints = cigar_to_symmetric_banded_tracepoints(&cigar, *max_diff);
+            let double_band_tracepoints = cigar_to_double_band_tracepoints(&cigar, *max_diff);
+            let single_band_tracepoints = cigar_to_single_band_tracepoints(&cigar, *max_diff);
             
             // Check basic tracepoints
             assert_eq!(tracepoints, *expected_tracepoints,
                        "Test case {}: Basic tracepoints with max_diff={} incorrect", i+1, max_diff);
                        
-            // Check banded tracepoints
-            assert_eq!(banded_tracepoints, *expected_banded_tracepoints,
-                       "Test case {}: Banded tracepoints with max_diff={} incorrect", i+1, max_diff);
+            // Check double-band tracepoints
+            assert_eq!(double_band_tracepoints, *expected_double_band_tracepoints,
+                       "Test case {}: Double-band tracepoints with max_diff={} incorrect", i+1, max_diff);
             
-            // Check symmetric banded tracepoints
-            assert_eq!(symmetric_tracepoints, *expected_symmetric_tracepoints,
-                       "Test case {}: Symmetric banded tracepoints with max_diff={} incorrect", i+1, max_diff);
+            // Check single-band tracepoints
+            assert_eq!(single_band_tracepoints, *expected_single_band_tracepoints,
+                       "Test case {}: Single-band banded tracepoints with max_diff={} incorrect", i+1, max_diff);
             
             // Verify all implementations are consistent in terms of segment lengths
-            assert_eq!(tracepoints.len(), banded_tracepoints.len(), 
-                       "Test case {}: Basic and banded should produce the same number of segments", i+1);
+            assert_eq!(tracepoints.len(), double_band_tracepoints.len(), 
+                       "Test case {}: Basic and double-band should produce the same number of segments", i+1);
             
-            assert_eq!(tracepoints.len(), symmetric_tracepoints.len(), 
-                       "Test case {}: Basic and symmetric should produce the same number of segments", i+1);
+            assert_eq!(tracepoints.len(), single_band_tracepoints.len(), 
+                       "Test case {}: Basic and single_band should produce the same number of segments", i+1);
             
             for j in 0..tracepoints.len() {
                 let (a_len, b_len) = tracepoints[j];
-                let (a_len_banded, b_len_banded, _) = banded_tracepoints[j];
-                let (a_len_sym, b_len_sym, _) = symmetric_tracepoints[j];
+                let (a_len_banded, b_len_banded, _) = double_band_tracepoints[j];
+                let (a_len_sym, b_len_sym, _) = single_band_tracepoints[j];
                 
                 assert_eq!(
                     (a_len, b_len), 
                     (a_len_banded, b_len_banded),
-                    "Test case {}, segment {}: Length mismatch - Basic vs Banded", i+1, j
+                    "Test case {}, segment {}: Length mismatch - Basic vs Double-band", i+1, j
                 );
                 
                 assert_eq!(
                     (a_len, b_len), 
                     (a_len_sym, b_len_sym),
-                    "Test case {}, segment {}: Length mismatch - Basic vs Symmetric", i+1, j
+                    "Test case {}, segment {}: Length mismatch - Basic vs Single-band", i+1, j
                 );
             }
         }
@@ -815,29 +815,29 @@ mod tests {
         );
         assert_eq!(basic_cigar, original_cigar, "Basic implementation failed");
         
-        // Test banded tracepoints
-        let banded_tracepoints = cigar_to_banded_tracepoints(&original_cigar, max_diff);
-        let banded_cigar = banded_tracepoints_to_cigar(
-            &banded_tracepoints,
+        // Test double-band tracepoints
+        let double_band_tracepoints = cigar_to_double_band_tracepoints(&original_cigar, max_diff);
+        let double_band_cigar = double_band_tracepoints_to_cigar(
+            &double_band_tracepoints,
             a_seq, b_seq, 
             0, 0,  // sequences and start positions
             2, 4, 2, 6, 1        // alignment penalties
         );
-        assert_eq!(banded_cigar, original_cigar, "Banded implementation failed");
+        assert_eq!(double_band_cigar, original_cigar, "Double-band implementation failed");
         
-        // Test symmetric banded tracepoints
-        let symmetric_tracepoints = cigar_to_symmetric_banded_tracepoints(&original_cigar, max_diff);
-        let symmetric_cigar = banded_symmetric_tracepoints_to_cigar(
-            &symmetric_tracepoints,
+        // Test single-band tracepoints
+        let single_band_tracepoints = cigar_to_single_band_tracepoints(&original_cigar, max_diff);
+        let single_band_cigar = single_band_tracepoints_to_cigar(
+            &single_band_tracepoints,
             a_seq, b_seq, 
             0, 0,  // sequences and start positions
             2, 4, 2, 6, 1        // alignment penalties
         );
-        assert_eq!(symmetric_cigar, original_cigar, "Symmetric banded implementation failed");
+        assert_eq!(single_band_cigar, original_cigar, "Single-band implementation failed");
     }
 
     #[test]
-    fn test_symmetric_banded_functionality() {
+    fn test_single_band_functionality() {
         // Test with various CIGAR strings that have different diagonal patterns
         let test_cases = vec![
             // CIGAR string, max_diff
@@ -852,18 +852,18 @@ mod tests {
         ];
         
         for (cigar, max_diff) in test_cases {
-            // Generate both banded and symmetric banded tracepoints
-            let banded = cigar_to_banded_tracepoints(cigar, max_diff);
-            let symmetric = cigar_to_symmetric_banded_tracepoints(cigar, max_diff);
+            // Generate both double- and single-band tracepoints
+            let double_band = cigar_to_double_band_tracepoints(cigar, max_diff);
+            let single_band = cigar_to_single_band_tracepoints(cigar, max_diff);
             
             // Verify that both produce the same number of segments
-            assert_eq!(banded.len(), symmetric.len(), 
-                       "CIGAR '{}': Banded and symmetric should produce same number of segments", cigar);
+            assert_eq!(double_band.len(), single_band.len(), 
+                       "CIGAR '{}': Double- and single-band should produce same number of segments", cigar);
             
-            // Verify that max_abs_k in symmetric is the max of abs(min_k) and abs(max_k) from banded
-            for i in 0..banded.len() {
-                let (a_len, b_len, (min_k, max_k)) = banded[i];
-                let (a_len_sym, b_len_sym, max_abs_k) = symmetric[i];
+            // Verify that max_abs_k in single-band is the max of abs(min_k) and abs(max_k) from double-band
+            for i in 0..double_band.len() {
+                let (a_len, b_len, (min_k, max_k)) = double_band[i];
+                let (a_len_sym, b_len_sym, max_abs_k) = single_band[i];
                 
                 // Check segment lengths match
                 assert_eq!((a_len, b_len), (a_len_sym, b_len_sym),

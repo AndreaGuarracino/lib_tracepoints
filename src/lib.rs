@@ -96,16 +96,17 @@ pub fn cigar_to_tracepoints(
     tracepoints
 }
 
-/// Convert a CIGAR string into tracepoints with diagonal tracking.
+/// Convert a CIGAR string into double-band tracepoints with diagonal tracking.
 /// 
 /// Similar to cigar_to_tracepoints but adds diagonal boundary tracking.
-/// The diagonal position tracks the relative offset between sequences and helps
-/// optimize subsequent alignment by constraining the search space.
+/// Stores both minimum and maximum diagonal boundaries for each segment,
+/// providing more detailed alignment path information at the cost of larger
+/// data representation.
 /// 
 /// @param cigar: The CIGAR string to process
 /// @param max_diff: Maximum number of differences allowed in each segment
 /// @return Vector of tracepoints with diagonal boundaries: (a_len, b_len, (min_diagonal, max_diagonal))
-pub fn cigar_to_banded_tracepoints(
+pub fn cigar_to_double_band_tracepoints(
     cigar: &str,
     max_diff: usize,
 ) -> Vec<(usize, usize, (isize, isize))> {
@@ -212,19 +213,21 @@ pub fn cigar_to_banded_tracepoints(
     tracepoints
 }
 
-/// Convert a CIGAR string into tracepoints with symmetric band tracking.
+/// Convert a CIGAR string into single-band tracepoints.
 /// 
-/// Similar to cigar_to_banded_tracepoints but only stores the maximum absolute
+/// Similar to cigar_to_double_band_tracepoints but only stores the maximum absolute
 /// diagonal value for each segment, providing a more compact representation.
+/// This approach is more memory-efficient but may require more computation during
+/// alignment reconstruction.
 /// 
 /// @param cigar: The CIGAR string to process
 /// @param max_diff: Maximum number of differences allowed in each segment
 /// @return Vector of tracepoints with symmetric band info: (a_len, b_len, max_abs_diagonal)
-pub fn cigar_to_symmetric_banded_tracepoints(
+pub fn cigar_to_single_band_tracepoints(
     cigar: &str,
     max_diff: usize,
 ) -> Vec<(usize, usize, usize)> {
-    let tracepoints = cigar_to_banded_tracepoints(cigar, max_diff);
+    let tracepoints = cigar_to_double_band_tracepoints(cigar, max_diff);
     
     // Convert to the simplified format with just max_abs_diagonal as usize
     tracepoints.into_iter()
@@ -303,7 +306,7 @@ pub fn tracepoints_to_cigar(
     cigar_ops_to_cigar_string(&merged)
 }
 
-/// Reconstruct a CIGAR string from banded tracepoints.
+/// Reconstruct a CIGAR string from double-band tracepoints.
 /// 
 /// Similar to tracepoints_to_cigar but utilizes the diagonal boundary
 /// information to constrain the WFA alignment search space. This improves performance
@@ -320,7 +323,7 @@ pub fn tracepoints_to_cigar(
 /// @param gap_open2: Penalty for opening a gap (second gap type)
 /// @param gap_ext2: Penalty for extending a gap (second gap type)
 /// @return Reconstructed CIGAR string
-pub fn banded_tracepoints_to_cigar(
+pub fn double_band_tracepoints_to_cigar(
     tracepoints: &[(usize, usize, (isize, isize))],
     a_seq: &[u8],
     b_seq: &[u8],
@@ -367,9 +370,11 @@ pub fn banded_tracepoints_to_cigar(
     cigar_ops_to_cigar_string(&merged)
 }
 
-/// Reconstruct a CIGAR string from banded tracepoints.
+/// Reconstruct a CIGAR string from single-band tracepoints.
 /// 
-/// Similar to banded_tracepoints_to_cigar but utilizes a symmetric boundary.
+/// Similar to double_band_tracepoints_to_cigar but uses a symmetric boundary
+/// approach that's more memory-efficient. During alignment reconstruction,
+/// it creates a band of equal width in both positive and negative diagonal directions.
 /// 
 /// @param tracepoints: Vector of (a_len, b_len, max_abs_diagonal) triples
 /// @param a_seq: Reference sequence string
@@ -382,7 +387,7 @@ pub fn banded_tracepoints_to_cigar(
 /// @param gap_open2: Penalty for opening a gap (second gap type)
 /// @param gap_ext2: Penalty for extending a gap (second gap type)
 /// @return Reconstructed CIGAR string
-pub fn banded_symmetric_tracepoints_to_cigar(
+pub fn single_band_tracepoints_to_cigar(
     tracepoints: &[(usize, usize, usize)],
     a_seq: &[u8],
     b_seq: &[u8],

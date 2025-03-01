@@ -8,8 +8,8 @@ A Rust library for compressed alignment representation using tracepoints.
 
 - Converting CIGAR strings to tracepoints
 - Reconstructing CIGAR strings from tracepoints
-- Managing alignment segments with configurable difference thresholds
-- Tuning alignment compression/decompression with diagonal boundary tracking (dual or symmetric)
+- Managing tracepoints with configurable difference thresholds
+- Tuning alignment compression/decompression with diagonal boundary tracking (single- or double-band)
 
 ## Installation
 
@@ -69,25 +69,23 @@ fn main() {
 }
 ```
 
-### Banded tracepoints
+### Double-band tracepoints
 
-The library supports two approaches for diagonal boundary tracking.
-
-The full diagonal tracking stores both the minimum and maximum diagonal boundaries for each tracepoint. This approach is more verbose (compress less) but allows for faster alignment reconstruction.
+This approach stores both the minimum and maximum diagonal boundaries for each tracepoint. It provides more detailed boundary information for faster CIGAR string reconstruction but results in a slightly larger alignment representation.
 
 ```rust
-use lib_tracepoints::{cigar_to_banded_tracepoints, banded_tracepoints_to_cigar};
+use lib_tracepoints::{cigar_to_double_band_tracepoints, double_band_tracepoints_to_cigar};
 
 fn main() {
     let cigar = "10=2D5=2I3=";
     
     // Store both min and max diagonal boundaries
     let tracepoints: Vec<(usize, usize, (isize, isize))> = 
-        cigar_to_banded_tracepoints(cigar, 5);
+        cigar_to_double_band_tracepoints(cigar, 5);
 
     let a_seq = "ACGTACGTACACGTACGTAC";
     let b_seq = "ACGTACGTACACGTACGTAC";
-    let reconstructed_cigar = banded_tracepoints_to_cigar(
+    let reconstructed_cigar = double_band_tracepoints_to_cigar(
         &tracepoints,
         a_seq.as_bytes(),
         b_seq.as_bytes(),
@@ -96,22 +94,24 @@ fn main() {
 }
 ```
 
-The symmetric band tracking stores only the maximum diagonal boundary for each tracepoint. This approach is more compact (compress more) but requires more computation to reconstruct the alignment compared to the full diagonal tracking.
+### Single-band tracepoints
+
+This approach stores only the maximum absolute diagonal boundary for each tracepoint. It's more memory-efficient but may require more computation during alignment reconstruction.
 
 ```rust
-use lib_tracepoints::{cigar_to_symmetric_banded_tracepoints, symmetric_banded_tracepoints_to_cigar};
+use lib_tracepoints::{cigar_to_single_band_tracepoints, single_band_tracepoints_to_cigar};
 
 fn main() {
     let cigar = "10=2D5=2I3=";
     
     // Store only the maximum absolute diagonal value (more compact)
-    let symmetric_tracepoints: Vec<(usize, usize, usize)> = 
-        cigar_to_symmetric_banded_tracepoints(cigar, 5);
+    let single_band_tracepoints: Vec<(usize, usize, usize)> = 
+        cigar_to_single_band_tracepoints(cigar, 5);
     
     let a_seq = "ACGTACGTACACGTACGTAC";
     let b_seq = "ACGTACGTACACGTACGTAC";
-    let reconstructed_cigar = symmetric_banded_tracepoints_to_cigar(
-        &symmetric_tracepoints,
+    let reconstructed_cigar = single_band_tracepoints_to_cigar(
+        &single_band_tracepoints,
         a_seq.as_bytes(),
         b_seq.as_bytes(),
         0, 0, 2, 4, 2, 6, 1

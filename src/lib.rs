@@ -20,7 +20,7 @@ pub fn cigar_to_tracepoints(
 ) -> Vec<(usize, usize)> {
     let ops = cigar_str_to_cigar_ops(cigar);
     let mut tracepoints = Vec::new();
-    // current segment counters:
+
     let mut cur_a_len = 0;
     let mut cur_b_len = 0;
     let mut cur_diff = 0;
@@ -111,7 +111,7 @@ pub fn cigar_to_banded_tracepoints(
 ) -> Vec<(usize, usize, (isize, isize))> {
     let ops = cigar_str_to_cigar_ops(cigar);
     let mut tracepoints = Vec::new();
-    // current segment counters:
+
     let mut cur_a_len = 0;
     let mut cur_b_len = 0;
     let mut cur_diff = 0;
@@ -119,6 +119,7 @@ pub fn cigar_to_banded_tracepoints(
     let mut current_diagonal : isize = 0;  // Current diagonal position
     let mut min_diagonal : isize = 0;      // Lowest diagonal reached
     let mut max_diagonal : isize = 0;      // Highest diagonal reached
+    //let mut max_gap : usize = 0;           // Maximum gap (indel) size
 
     for (mut len, op) in ops {
         match op {
@@ -139,6 +140,7 @@ pub fn cigar_to_banded_tracepoints(
                         current_diagonal = 0;
                         min_diagonal = 0;
                         max_diagonal = 0;
+                        //max_gap = 0;
                     }
                 }
             },
@@ -154,12 +156,13 @@ pub fn cigar_to_banded_tracepoints(
                         current_diagonal = 0;
                         min_diagonal = 0;
                         max_diagonal = 0;
+                        //max_gap = 0;
                     }
                     if op == 'I' {
                         tracepoints.push((len, 0, (0, len as isize)));
                     } else {
                         // op == 'D'
-                        tracepoints.push((0, len, (len as isize, 0)));
+                        tracepoints.push((0, len, (-(len as isize), 0)));
                     }
                 } else {
                     // If adding this indel would push the diff over the threshold, flush first.
@@ -171,24 +174,24 @@ pub fn cigar_to_banded_tracepoints(
                         current_diagonal = 0;
                         min_diagonal = 0;
                         max_diagonal = 0;
+                        //max_gap = 0;
                     }
                     // Then accumulate the entire indel.
                     if op == 'I' {
                         cur_a_len += len;
-                    } else {
-                        // op == 'D'
-                        cur_b_len += len;
-                    }
-                    cur_diff += len;
 
-                    if op == 'I' {
                         current_diagonal += len as isize;
                         max_diagonal = max_diagonal.max(current_diagonal);
                     } else {
                         // op == 'D'
+                        cur_b_len += len;
+
                         current_diagonal -= len as isize;
                         min_diagonal = min_diagonal.min(current_diagonal);
                     }
+                    //max_gap = std::cmp::max(max_gap, len);
+
+                    cur_diff += len;
                 }
             },
             '=' | 'M' => {
@@ -207,6 +210,32 @@ pub fn cigar_to_banded_tracepoints(
         tracepoints.push((cur_a_len, cur_b_len, (min_diagonal, max_diagonal)));
     }
     tracepoints
+}
+
+/// Convert a CIGAR string into tracepoints with symmetric band tracking.
+/// 
+/// Similar to cigar_to_banded_tracepoints but only stores the maximum absolute
+/// diagonal value for each segment, providing a more compact representation.
+/// 
+/// @param cigar: The CIGAR string to process
+/// @param max_diff: Maximum number of differences allowed in each segment
+/// @return Vector of tracepoints with symmetric band info: (a_len, b_len, max_abs_diagonal)
+pub fn cigar_to_symmetric_banded_tracepoints(
+    cigar: &str,
+    max_diff: usize,
+) -> Vec<(usize, usize, usize)> {
+    let tracepoints = cigar_to_banded_tracepoints(cigar, max_diff);
+    
+    // Convert to the simplified format with just max_abs_diagonal as usize
+    tracepoints.into_iter()
+               .map(|(a_len, b_len, (min_k, max_k))| {
+                    // Take the maximum absolute value of the diagonals
+                    let max_abs_k = std::cmp::max(-min_k, max_k) as usize;
+                    println!("min_k: {}, max_k: {}", min_k, max_k);
+                    println!("max_abs_k: {}", max_abs_k);
+                    (a_len, b_len, max_abs_k)
+               })
+               .collect()
 }
 
 /// Reconstruct a CIGAR string from tracepoints.
@@ -338,6 +367,67 @@ pub fn banded_tracepoints_to_cigar(
     cigar_ops_to_cigar_string(&merged)
 }
 
+/// Reconstruct a CIGAR string from banded tracepoints.
+/// 
+/// Similar to banded_tracepoints_to_cigar but utilizes a symmetric boundary.
+/// 
+/// @param tracepoints: Vector of (a_len, b_len, max_abs_diagonal) triples
+/// @param a_seq: Reference sequence string
+/// @param b_seq: Query sequence string
+/// @param a_start: Starting position in reference sequence
+/// @param b_start: Starting position in query sequence
+/// @param mismatch: Penalty for mismatches
+/// @param gap_open1: Penalty for opening a gap (first gap type)
+/// @param gap_ext1: Penalty for extending a gap (first gap type)
+/// @param gap_open2: Penalty for opening a gap (second gap type)
+/// @param gap_ext2: Penalty for extending a gap (second gap type)
+/// @return Reconstructed CIGAR string
+pub fn banded_symmetric_tracepoints_to_cigar(
+    tracepoints: &[(usize, usize, usize)],
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    b_start: usize,
+    mismatch: i32,
+    gap_open1: i32,
+    gap_ext1: i32,
+    gap_open2: i32,
+    gap_ext2: i32,
+) -> String {
+    // Create aligner and configure settings
+    let mut aligner = AffineWavefronts::with_penalties_affine2p(0, mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2);
+
+    let mut cigar_ops = Vec::new();
+    let mut current_a = a_start;
+    let mut current_b = b_start;
+
+    for &(a_len, b_len, max_abs_k) in tracepoints {
+        // Special case: long indel.
+        if a_len > 0 && b_len == 0 {
+            // This is an insertion.
+            cigar_ops.push((a_len, 'I'));
+            current_a += a_len;
+        } else if b_len > 0 && a_len == 0 {
+            // This is a deletion.
+            cigar_ops.push((b_len, 'D'));
+            current_b += b_len;
+        } else {
+            let a_end = current_a + a_len;
+            let b_end = current_b + b_len;
+            aligner.set_heuristic(&HeuristicStrategy::BandedStatic { band_min_k: -(max_abs_k as i32) - 1, band_max_k: (max_abs_k + 1) as i32 });
+            let seg_ops = align_sequences_wfa(
+                &a_seq[current_a..a_end],
+                &b_seq[current_b..b_end],
+                &mut aligner
+            );
+            cigar_ops.extend(seg_ops);
+            current_a = a_end;
+            current_b = b_end;
+        }
+    }
+    let merged = merge_cigar_ops(cigar_ops);
+    cigar_ops_to_cigar_string(&merged)
+}
 
 // Helper functions
 
@@ -415,7 +505,7 @@ fn cigar_u8_to_cigar_ops(ops: &[u8]) -> Vec<(usize, char)> {
 /// 
 /// @param ops: Vector of (length, operation) pairs
 /// @return Formatted CIGAR string (e.g., "10M2D5M")
-fn cigar_ops_to_cigar_string(ops: &[(usize, char)]) -> String {
+pub fn cigar_ops_to_cigar_string(ops: &[(usize, char)]) -> String {
     ops.iter()
         .map(|(len, op)| format!("{}{}", len, op))
         .collect::<Vec<_>>()
@@ -428,7 +518,7 @@ fn cigar_ops_to_cigar_string(ops: &[(usize, char)]) -> String {
 /// @param b: Query sequence segment
 /// @param aligner: Configured WFA aligner
 /// @return Vector of CIGAR operations for the alignment
-fn align_sequences_wfa(
+pub fn align_sequences_wfa(
     a: &[u8],
     b: &[u8],
     aligner: &mut AffineWavefronts
@@ -638,29 +728,33 @@ mod tests {
         // Test CIGAR string
         let cigar = "10M2D5M2I3M";
         
-        // Define test cases: (max_diff, expected_tracepoints, expected_banded_tracepoints)
+        // Define test cases: (max_diff, expected_tracepoints, expected_banded_tracepoints, expected_symmetric_tracepoints)
         let test_cases = vec![
             // Case 1: No differences allowed - each operation becomes its own segment
             (0, 
              vec![(10, 10), (0, 2), (5, 5), (2, 0), (3, 3)],
-             vec![(10, 10, (0, 0)), (0, 2, (2, 0)), (5, 5, (0, 0)), (2, 0, (0, 2)), (3, 3, (0, 0))]),
+             vec![(10, 10, (0, 0)), (0, 2, (-2, 0)), (5, 5, (0, 0)), (2, 0, (0, 2)), (3, 3, (0, 0))],
+             vec![(10, 10, 0), (0, 2, 2), (5, 5, 0), (2, 0, 2), (3, 3, 0)]),
             
             // Case 2: Allow up to 2 differences in each segment
             (2,
              vec![(15, 17), (5, 3)],
-             vec![(15, 17, (-2, 0)), (5, 3, (0, 2))]),
+             vec![(15, 17, (-2, 0)), (5, 3, (0, 2))],
+             vec![(15, 17, 2), (5, 3, 2)]),
             
             // Case 3: Allow up to 5 differences - combines all operations
             (5,
              vec![(20, 20)],
-             vec![(20, 20, (-2, 0))])
+             vec![(20, 20, (-2, 0))],
+             vec![(20, 20, 2)])
         ];
         
         // Run each test case
-        for (i, (max_diff, expected_tracepoints, expected_banded_tracepoints)) in test_cases.iter().enumerate() {
+        for (i, (max_diff, expected_tracepoints, expected_banded_tracepoints, expected_symmetric_tracepoints)) in test_cases.iter().enumerate() {
             // Get actual results
             let tracepoints = cigar_to_tracepoints(&cigar, *max_diff);
             let banded_tracepoints = cigar_to_banded_tracepoints(&cigar, *max_diff);
+            let symmetric_tracepoints = cigar_to_symmetric_banded_tracepoints(&cigar, *max_diff);
             
             // Check basic tracepoints
             assert_eq!(tracepoints, *expected_tracepoints,
@@ -670,17 +764,32 @@ mod tests {
             assert_eq!(banded_tracepoints, *expected_banded_tracepoints,
                        "Test case {}: Banded tracepoints with max_diff={} incorrect", i+1, max_diff);
             
-            // Verify both implementations are consistent in terms of segment lengths
-            assert_eq!(tracepoints.len(), banded_tracepoints.len(), 
-                       "Test case {}: Implementations should produce the same number of segments", i+1);
+            // Check symmetric banded tracepoints
+            assert_eq!(symmetric_tracepoints, *expected_symmetric_tracepoints,
+                       "Test case {}: Symmetric banded tracepoints with max_diff={} incorrect", i+1, max_diff);
             
-            for (j, ((a_len, b_len), (a_len_banded, b_len_banded, _))) in 
-                tracepoints.iter().zip(banded_tracepoints.iter()).enumerate() {
+            // Verify all implementations are consistent in terms of segment lengths
+            assert_eq!(tracepoints.len(), banded_tracepoints.len(), 
+                       "Test case {}: Basic and banded should produce the same number of segments", i+1);
+            
+            assert_eq!(tracepoints.len(), symmetric_tracepoints.len(), 
+                       "Test case {}: Basic and symmetric should produce the same number of segments", i+1);
+            
+            for j in 0..tracepoints.len() {
+                let (a_len, b_len) = tracepoints[j];
+                let (a_len_banded, b_len_banded, _) = banded_tracepoints[j];
+                let (a_len_sym, b_len_sym, _) = symmetric_tracepoints[j];
+                
                 assert_eq!(
                     (a_len, b_len), 
                     (a_len_banded, b_len_banded),
-                    "Test case {}, segment {}: Length mismatch - Standard: ({}, {}) vs Banded: ({}, {})",
-                    i+1, j, a_len, b_len, a_len_banded, b_len_banded
+                    "Test case {}, segment {}: Length mismatch - Basic vs Banded", i+1, j
+                );
+                
+                assert_eq!(
+                    (a_len, b_len), 
+                    (a_len_sym, b_len_sym),
+                    "Test case {}, segment {}: Length mismatch - Basic vs Symmetric", i+1, j
                 );
             }
         }
@@ -704,7 +813,7 @@ mod tests {
         assert_eq!(basic_cigar, original_cigar, "Basic implementation failed");
         
         // Test banded tracepoints
-        let banded_tracepoints: Vec<(usize, usize, (isize, isize))> = cigar_to_banded_tracepoints(&original_cigar, max_diff);
+        let banded_tracepoints = cigar_to_banded_tracepoints(&original_cigar, max_diff);
         let banded_cigar = banded_tracepoints_to_cigar(
             &banded_tracepoints,
             a_seq, b_seq, 
@@ -712,5 +821,56 @@ mod tests {
             2, 4, 2, 6, 1        // alignment penalties
         );
         assert_eq!(banded_cigar, original_cigar, "Banded implementation failed");
+        
+        // Test symmetric banded tracepoints
+        let symmetric_tracepoints = cigar_to_symmetric_banded_tracepoints(&original_cigar, max_diff);
+        let symmetric_cigar = banded_symmetric_tracepoints_to_cigar(
+            &symmetric_tracepoints,
+            a_seq, b_seq, 
+            0, 0,  // sequences and start positions
+            2, 4, 2, 6, 1        // alignment penalties
+        );
+        assert_eq!(symmetric_cigar, original_cigar, "Symmetric banded implementation failed");
+    }
+
+    #[test]
+    fn test_symmetric_banded_functionality() {
+        // Test with various CIGAR strings that have different diagonal patterns
+        let test_cases = vec![
+            // CIGAR string, max_diff
+            ("10=", 5),                   // Only matches
+            ("5I5=", 5),                  // Insertion followed by matches
+            ("5=5D", 5),                  // Matches followed by deletion
+            ("3I2=1D4=2I", 3),            // Mix of operations
+            ("20I", 10),                  // Long insertion
+            ("20D", 10),                  // Long deletion
+            ("5=3X2=4D1=2I", 5),          // Mix with mismatches
+            ("1I1D1I1D1I1D", 2),          // Alternating small indels
+        ];
+        
+        for (cigar, max_diff) in test_cases {
+            // Generate both banded and symmetric banded tracepoints
+            let banded = cigar_to_banded_tracepoints(cigar, max_diff);
+            let symmetric = cigar_to_symmetric_banded_tracepoints(cigar, max_diff);
+            
+            // Verify that both produce the same number of segments
+            assert_eq!(banded.len(), symmetric.len(), 
+                       "CIGAR '{}': Banded and symmetric should produce same number of segments", cigar);
+            
+            // Verify that max_abs_k in symmetric is the max of abs(min_k) and abs(max_k) from banded
+            for i in 0..banded.len() {
+                let (a_len, b_len, (min_k, max_k)) = banded[i];
+                let (a_len_sym, b_len_sym, max_abs_k) = symmetric[i];
+                
+                // Check segment lengths match
+                assert_eq!((a_len, b_len), (a_len_sym, b_len_sym),
+                          "CIGAR '{}', segment {}: Segment lengths should match", cigar, i);
+                
+                // Check max_abs_k is correctly calculated
+                let expected_max_abs_k = std::cmp::max(-min_k, max_k) as usize;
+                assert_eq!(max_abs_k, expected_max_abs_k,
+                          "CIGAR '{}', segment {}: max_abs_k should be max(|min_k|, |max_k|)", cigar, i);
+            }
+        }
     }
 }

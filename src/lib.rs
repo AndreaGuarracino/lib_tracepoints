@@ -355,7 +355,7 @@ pub fn double_band_tracepoints_to_cigar(
         } else {
             let a_end = current_a + a_len;
             let b_end = current_b + b_len;
-            aligner.set_heuristic(&HeuristicStrategy::BandedStatic { band_min_k: (2*min_k - 1) as i32, band_max_k: (2*max_k + 1) as i32 });
+            aligner.set_heuristic(&HeuristicStrategy::BandedStatic { band_min_k: (min_k - 1) as i32, band_max_k: (max_k + 1) as i32 });
             let seg_ops = align_sequences_wfa(
                 &a_seq[current_a..a_end],
                 &b_seq[current_b..b_end],
@@ -419,7 +419,7 @@ pub fn single_band_tracepoints_to_cigar(
         } else {
             let a_end = current_a + a_len;
             let b_end = current_b + b_len;
-            aligner.set_heuristic(&HeuristicStrategy::BandedStatic { band_min_k: -(2*max_abs_k as i32) - 1, band_max_k: (2*max_abs_k + 1) as i32 });
+            aligner.set_heuristic(&HeuristicStrategy::BandedStatic { band_min_k: -(max_abs_k as i32) - 1, band_max_k: (max_abs_k + 1) as i32 });
             let seg_ops = align_sequences_wfa(
                 &a_seq[current_a..a_end],
                 &b_seq[current_b..b_end],

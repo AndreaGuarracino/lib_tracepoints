@@ -1,15 +1,14 @@
 # lib_tracepoints
 
-A Rust library for compressed alignment representation using tracepoints.
+A Rust library for sequence alignment compression and reconstruction using tracepoints.
 
 ## Overview
 
-`lib_tracepoints` provides utilities for converting between CIGAR strings and tracepoints for efficient alignment representation in bioinformatics applications. The library enables:
+`lib_tracepoints` provides utilities for converting between CIGAR strings and various tracepoint representations for efficient alignment storage in bioinformatics applications. The library enables:
 
 - Converting CIGAR strings to tracepoints
 - Reconstructing CIGAR strings from tracepoints
-- Managing tracepoints with configurable difference thresholds
-- Tuning alignment compression/decompression with diagonal boundary tracking (single- or double-band)
+- Supporting multiple tracepoint representations with varying space-time tradeoffs
 
 ## Installation
 
@@ -18,6 +17,7 @@ Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
 lib_tracepoints = { git = "https://github.com/AndreaGuarracino/lib_tracepoints" }
+lib_wfa2 = { path = "/home/guarracino/Dropbox/git/lib_wfa2"}
 ```
 
 ## Dependencies
@@ -38,6 +38,13 @@ export WFA2LIB_PATH="/path/to/WFA2-lib"
 # Build your project
 cargo build --release
 ```
+
+## Features
+
+- **Basic Tracepoints**: Simple `(a_len, b_len)` pairs for each segment
+- **Double-Band Tracepoints**: Enhanced `(a_len, b_len, (min_diagonal, max_diagonal))` triples for faster reconstruction
+- **Single-Band Tracepoints**: Memory-efficient `(a_len, b_len, max_abs_diagonal)` triples
+- **Mixed Representation**: Preserves special CIGAR operations `(H, N, P, S)` that aren't suitable for reconstruction
 
 ## Usage
 
@@ -118,3 +125,50 @@ fn main() {
     );
 }
 ```
+
+### Mixed representation
+
+This approach preserves special CIGAR operations that aren't suitable for WFA alignment.
+
+```rust
+use lib_tracepoints::{cigar_to_mixed_tracepoints, mixed_tracepoints_to_cigar, MixedRepresentation};
+
+fn main() {
+    let cigar = "5=2H3=";
+    let mixed_tracepoints = cigar_to_mixed_tracepoints(cigar, 2);
+    
+    let a_seq = b"ACGTACGTAC";
+    let b_seq = b"ACGTACGTAC";
+    let reconstructed_cigar = mixed_tracepoints_to_cigar(
+        &mixed_tracepoints,
+        a_seq,
+        b_seq,
+        0, 0, 2, 4, 2, 6, 1
+    );
+}
+```
+
+## How It Works
+
+### CIGAR to Tracepoints Conversion
+
+The library segments a CIGAR string into tracepoints where each segment contains at most `max_diff` differences (mismatches or indels):
+
+- Match operations ('=' and 'M') don't count as differences
+- Mismatch operations ('X') can be split across segments if needed
+- Indels ('I', 'D') are kept intact within a single segment when possible
+- Long indels exceeding `max_diff` become their own segments
+
+### Diagonal Tracking
+
+For banded implementations:
+- `min_diagonal` tracks the lowest diagonal reached in a segment
+- `max_diagonal` tracks the highest diagonal reached in a segment
+- Diagonal position changes when indels are encountered (increases for insertions, decreases for deletions)
+
+### Tracepoints to CIGAR Reconstruction
+
+For each tracepoint pair, the library performs the alignment of the corresponding sequence segments using WFA alignment:
+- Pure insertions (a_len > 0, b_len = 0) are directly converted to 'I' operations
+- Pure deletions (a_len = 0, b_len > 0) are directly converted to 'D' operations
+- Mixed segments are realigned using the WFA algorithm with the diagonal boundary information

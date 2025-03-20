@@ -3,17 +3,15 @@ use lib_wfa2::affine_wavefront::{AffineWavefronts, AlignmentStatus, HeuristicStr
 
 /// Convert a CIGAR string into tracepoints.
 /// 
-/// This function segments a CIGAR string into tracepoints where each segment contains
-/// at most `max_diff` differences (mismatches or indels). Match operations ('=' and 'M') 
-/// don't count as differences. Key features:
-/// 
-/// - Mismatch operations ('X') can be split across segments if needed
-/// - Indels ('I', 'D') are kept intact within a single segment when possible
+/// Segments a CIGAR string into tracepoints with at most `max_diff` differences per segment.
+/// - Match operations ('=' and 'M') don't count as differences.
+/// - Mismatches ('X') can be split across segments
+/// - Indels ('I', 'D') are kept in a single segment when possible
 /// - Long indels exceeding max_diff become their own segments
 /// 
 /// @param cigar: The CIGAR string to process
 /// @param max_diff: Maximum number of differences allowed in each segment
-/// @return Vector of tracepoints, each containing (a_segment_length, b_segment_length)
+/// @return Vector of tracepoints containing (a_segment_length, b_segment_length)
 pub fn cigar_to_tracepoints(
     cigar: &str,
     max_diff: usize,
@@ -96,7 +94,7 @@ pub fn cigar_to_tracepoints(
     tracepoints
 }
 
-/// Represents a CIGAR segment that isn't suitable for WFA alignment and should be preserved as-is
+/// Represents a CIGAR segment that can be either aligned or preserved as-is
 #[derive(Debug, Clone, PartialEq)]
 pub enum MixedRepresentation {
     /// Alignment segment represented by tracepoints
@@ -105,6 +103,14 @@ pub enum MixedRepresentation {
     CigarOp(usize, char),
 }
 
+/// Convert a CIGAR string into mixed representation tracepoints.
+/// 
+/// Similar to cigar_to_tracepoints but preserves special operations (H, N, P, S)
+/// that should not be processed by WFA alignment.
+/// 
+/// @param cigar: The CIGAR string to process
+/// @param max_diff: Maximum number of differences allowed in each segment
+/// @return Vector of mixed representation elements
 pub fn cigar_to_mixed_tracepoints(
     cigar: &str,
     max_diff: usize,
@@ -201,10 +207,9 @@ pub fn cigar_to_mixed_tracepoints(
 
 /// Convert a CIGAR string into double-band tracepoints with diagonal tracking.
 /// 
-/// Similar to cigar_to_tracepoints but adds diagonal boundary tracking.
+/// Similar to cigar_to_tracepoints but tracks diagonal boundaries.
 /// Stores both minimum and maximum diagonal boundaries for each segment,
-/// providing more detailed alignment path information at the cost of larger
-/// data representation.
+/// enabling more efficient WFA alignment during reconstruction.
 /// 
 /// @param cigar: The CIGAR string to process
 /// @param max_diff: Maximum number of differences allowed in each segment
@@ -321,9 +326,7 @@ pub fn cigar_to_double_band_tracepoints(
 /// Convert a CIGAR string into single-band tracepoints.
 /// 
 /// Similar to cigar_to_double_band_tracepoints but only stores the maximum absolute
-/// diagonal value for each segment, providing a more compact representation.
-/// This approach is more memory-efficient but may require more computation during
-/// alignment reconstruction.
+/// diagonal value for each segment, providing a more memory-efficient representation.
 /// 
 /// @param cigar: The CIGAR string to process
 /// @param max_diff: Maximum number of differences allowed in each segment
@@ -346,15 +349,15 @@ pub fn cigar_to_single_band_tracepoints(
 
 /// Reconstruct a CIGAR string from tracepoints.
 /// 
-/// For each tracepoint pair, this function performs a detailed alignment of the corresponding
-/// sequence segments using WFA alignment. Special cases are handled efficiently:
-/// - Pure insertions (a_len > 0, b_len = 0) are directly converted to 'I' operations
-/// - Pure deletions (a_len = 0, b_len > 0) are directly converted to 'D' operations
+/// For each tracepoint pair, performs detailed alignment using WFA alignment.
+/// Special cases are handled efficiently:
+/// - Pure insertions (a_len > 0, b_len = 0) become 'I' operations
+/// - Pure deletions (a_len = 0, b_len > 0) become 'D' operations
 /// - Mixed segments are realigned using the WFA algorithm
 /// 
 /// @param tracepoints: Vector of (a_len, b_len) pairs defining segment boundaries
-/// @param a_seq: Reference sequence string
-/// @param b_seq: Query sequence string
+/// @param a_seq: Reference sequence
+/// @param b_seq: Query sequence
 /// @param a_start: Starting position in reference sequence
 /// @param b_start: Starting position in query sequence
 /// @param mismatch: Penalty for mismatches
@@ -412,12 +415,11 @@ pub fn tracepoints_to_cigar(
 /// Reconstruct a CIGAR string from double-band tracepoints.
 /// 
 /// Similar to tracepoints_to_cigar but utilizes the diagonal boundary
-/// information to constrain the WFA alignment search space. This improves performance
-/// by limiting the search to the banded region where the alignment is expected to be found.
+/// information to constrain the WFA alignment search space, improving performance.
 /// 
 /// @param tracepoints: Vector of (a_len, b_len, (min_diagonal, max_diagonal)) triples
-/// @param a_seq: Reference sequence string
-/// @param b_seq: Query sequence string
+/// @param a_seq: Reference sequence
+/// @param b_seq: Query sequence
 /// @param a_start: Starting position in reference sequence
 /// @param b_start: Starting position in query sequence
 /// @param mismatch: Penalty for mismatches
@@ -475,13 +477,12 @@ pub fn double_band_tracepoints_to_cigar(
 
 /// Reconstruct a CIGAR string from single-band tracepoints.
 /// 
-/// Similar to double_band_tracepoints_to_cigar but uses a symmetric boundary
-/// approach that's more memory-efficient. During alignment reconstruction,
-/// it creates a band of equal width in both positive and negative diagonal directions.
+/// Uses a symmetric boundary approach that's more memory-efficient than double-band.
+/// Creates a band of equal width in both positive and negative diagonal directions.
 /// 
 /// @param tracepoints: Vector of (a_len, b_len, max_abs_diagonal) triples
-/// @param a_seq: Reference sequence string
-/// @param b_seq: Query sequence string
+/// @param a_seq: Reference sequence
+/// @param b_seq: Query sequence
 /// @param a_start: Starting position in reference sequence
 /// @param b_start: Starting position in query sequence
 /// @param mismatch: Penalty for mismatches
@@ -539,9 +540,12 @@ pub fn single_band_tracepoints_to_cigar(
 
 /// Reconstruct a CIGAR string from mixed representation.
 /// 
+/// Processes both regular alignment segments (Tracepoint) and special operations (CigarOp)
+/// to reconstruct a complete CIGAR string with all operations preserved.
+/// 
 /// @param mixed_tracepoints: Vector of MixedRepresentation items
-/// @param a_seq: Reference sequence string
-/// @param b_seq: Query sequence string
+/// @param a_seq: Reference sequence
+/// @param b_seq: Query sequence
 /// @param a_start: Starting position in reference sequence
 /// @param b_start: Starting position in query sequence
 /// @param mismatch: Penalty for mismatches

@@ -160,6 +160,42 @@ pub fn cigar_to_double_band_tracepoints(
     tracepoints
 }
 
+/// Convert a CIGAR string into variable-band tracepoints.
+///
+/// Processes double-band tracepoints and applies optimization strategies:
+/// - abs(min_k) <= 1 and abs(max_k) <= 1 (it also happens when a_len == 0 or b_len == 0), stores only (a_len, b_len)
+/// - When min_k > 1 and max_k > 1 and min_k != max_k, stores (a_len, b_len, diagonal) with single diagonal value
+/// - Otherwise, stores (a_len, b_len, min_k, max_k) with both diagonal boundaries
+///
+/// This approach optimizes memory usage while preserving necessary alignment information.
+///
+/// @param cigar: The CIGAR string to process
+/// @param max_diff: Maximum number of differences allowed in each segment
+/// @return Vector of optimized tracepoints with mixed diagonal representation
+pub fn cigar_to_variable_band_tracepoints(
+    cigar: &str,
+    max_diff: usize,
+) -> Vec<(usize, usize, Option<(isize, Option<isize>)>)> {
+    let tracepoints = cigar_to_double_band_tracepoints(cigar, max_diff);
+
+    // Convert to the variable format based on diagonal properties
+    tracepoints
+        .into_iter()
+        .map(|(a_len, b_len, (min_k, max_k))| {
+            if min_k.abs() <= 1 && max_k <= 1 {
+                // Case 1: No big diagonal offsets - use simplest representation
+                (a_len, b_len, None)
+            } else if min_k == max_k {
+                // Case 2: Single diagonal - store just one value
+                (a_len, b_len, Some((min_k, None)))
+            } else {
+                // Case 3: Diagonal range - store both boundaries
+                (a_len, b_len, Some((min_k, Some(max_k))))
+            }
+        })
+        .collect()
+}
+
 /// Represents a CIGAR segment that can be either aligned or preserved as-is
 #[derive(Debug, Clone, PartialEq)]
 pub enum MixedRepresentation {
@@ -512,6 +548,100 @@ pub fn double_band_tracepoints_to_cigar(
             current_b = b_end;
         }
     }
+    let merged = merge_cigar_ops(cigar_ops);
+    cigar_ops_to_cigar_string(&merged)
+}
+
+/// Reconstruct a CIGAR string from variable-band tracepoints.
+///
+/// Handles the optimized variable-band representation which may include:
+/// - Basic tracepoints with no diagonal information
+/// - Tracepoints with a single diagonal value
+/// - Tracepoints with both min and max diagonal boundaries
+///
+/// @param tracepoints: Vector of variable format tracepoints
+/// @param a_seq: Reference sequence
+/// @param b_seq: Query sequence
+/// @param a_start: Starting position in reference sequence
+/// @param b_start: Starting position in query sequence
+/// @param mismatch: Penalty for mismatches
+/// @param gap_open1: Penalty for opening a gap (first gap type)
+/// @param gap_ext1: Penalty for extending a gap (first gap type)
+/// @param gap_open2: Penalty for opening a gap (second gap type)
+/// @param gap_ext2: Penalty for extending a gap (second gap type)
+/// @return Reconstructed CIGAR string
+pub fn variable_band_tracepoints_to_cigar(
+    tracepoints: &[(usize, usize, Option<(isize, Option<isize>)>)],
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    b_start: usize,
+    mismatch: i32,
+    gap_open1: i32,
+    gap_ext1: i32,
+    gap_open2: i32,
+    gap_ext2: i32,
+) -> String {
+    // Create aligner and configure settings
+    let mut aligner = AffineWavefronts::with_penalties_affine2p(
+        0, mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2,
+    );
+
+    let mut cigar_ops = Vec::new();
+    let mut current_a = a_start;
+    let mut current_b = b_start;
+
+    for &(a_len, b_len, diagonal_info) in tracepoints {
+        // Special case: long indel.
+        if a_len > 0 && b_len == 0 {
+            // This is an insertion.
+            cigar_ops.push((a_len, 'I'));
+            current_a += a_len;
+        } else if b_len > 0 && a_len == 0 {
+            // This is a deletion.
+            cigar_ops.push((b_len, 'D'));
+            current_b += b_len;
+        } else {
+            let a_end = current_a + a_len;
+            let b_end = current_b + b_len;
+            
+            // Configure the aligner based on the diagonal information available
+            match diagonal_info {
+                None => {
+                    // No diagonal constraints - use -2/+2 band
+                    aligner.set_heuristic(&HeuristicStrategy::BandedStatic {
+                        band_min_k: -2,
+                        band_max_k: 2,
+                    });
+                },
+                Some((diagonal, None)) => {
+                    // Single diagonal value - set a narrow band around it
+                    let k = diagonal as i32;
+                    aligner.set_heuristic(&HeuristicStrategy::BandedStatic {
+                        band_min_k: k - 1,
+                        band_max_k: k + 1,
+                    });
+                },
+                Some((min_k, Some(max_k))) => {
+                    // Full diagonal range - use the min/max values
+                    aligner.set_heuristic(&HeuristicStrategy::BandedStatic {
+                        band_min_k: (min_k - 1) as i32,
+                        band_max_k: (max_k + 1) as i32,
+                    });
+                },
+            }
+            
+            let seg_ops = align_sequences_wfa(
+                &a_seq[current_a..a_end],
+                &b_seq[current_b..b_end],
+                &mut aligner,
+            );
+            cigar_ops.extend(seg_ops);
+            current_a = a_end;
+            current_b = b_end;
+        }
+    }
+    
     let merged = merge_cigar_ops(cigar_ops);
     cigar_ops_to_cigar_string(&merged)
 }

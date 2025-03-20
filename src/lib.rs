@@ -42,7 +42,7 @@ pub fn cigar_to_single_band_tracepoints(
         .into_iter()
         .map(|(a_len, b_len, (min_k, max_k))| {
             // Take the maximum absolute value of the diagonals
-            let max_abs_k = std::cmp::max(-min_k, max_k) as usize;
+            let max_abs_k = std::cmp::max(min_k, max_k);
             (a_len, b_len, max_abs_k)
         })
         .collect()
@@ -60,7 +60,7 @@ pub fn cigar_to_single_band_tracepoints(
 pub fn cigar_to_double_band_tracepoints(
     cigar: &str,
     max_diff: usize,
-) -> Vec<(usize, usize, (isize, isize))> {
+) -> Vec<(usize, usize, (usize, usize))> {
     let ops = cigar_str_to_cigar_ops(cigar);
     let mut tracepoints = Vec::new();
 
@@ -84,7 +84,7 @@ pub fn cigar_to_double_band_tracepoints(
                     cur_diff += step;
                     len -= step;
                     if cur_diff == max_diff {
-                        tracepoints.push((cur_a_len, cur_b_len, (min_diagonal, max_diagonal)));
+                        tracepoints.push((cur_a_len, cur_b_len, (min_diagonal.abs() as usize, max_diagonal as usize)));
                         cur_a_len = 0;
                         cur_b_len = 0;
                         cur_diff = 0;
@@ -99,7 +99,7 @@ pub fn cigar_to_double_band_tracepoints(
                 if len > max_diff {
                     // If the indel is too long, flush any pending segment first.
                     if cur_a_len > 0 || cur_b_len > 0 {
-                        tracepoints.push((cur_a_len, cur_b_len, (min_diagonal, max_diagonal)));
+                        tracepoints.push((cur_a_len, cur_b_len, (min_diagonal.abs() as usize, max_diagonal as usize)));
                         cur_a_len = 0;
                         cur_b_len = 0;
                         cur_diff = 0;
@@ -118,7 +118,7 @@ pub fn cigar_to_double_band_tracepoints(
                 } else {
                     // If adding this indel would push the diff over the threshold, flush first.
                     if cur_diff + len > max_diff {
-                        tracepoints.push((cur_a_len, cur_b_len, (min_diagonal, max_diagonal)));
+                        tracepoints.push((cur_a_len, cur_b_len, (min_diagonal.abs() as usize, max_diagonal as usize)));
                         cur_a_len = 0;
                         cur_b_len = 0;
                         cur_diff = 0;
@@ -155,7 +155,7 @@ pub fn cigar_to_double_band_tracepoints(
     }
     // Flush any remaining segment.
     if cur_a_len > 0 || cur_b_len > 0 {
-        tracepoints.push((cur_a_len, cur_b_len, (min_diagonal, max_diagonal)));
+        tracepoints.push((cur_a_len, cur_b_len, (min_diagonal.abs() as usize, max_diagonal as usize)));
     }
     tracepoints
 }
@@ -175,14 +175,14 @@ pub fn cigar_to_double_band_tracepoints(
 pub fn cigar_to_variable_band_tracepoints(
     cigar: &str,
     max_diff: usize,
-) -> Vec<(usize, usize, Option<(isize, Option<isize>)>)> {
+) -> Vec<(usize, usize, Option<(usize, Option<usize>)>)> {
     let tracepoints = cigar_to_double_band_tracepoints(cigar, max_diff);
 
     // Convert to the variable format based on diagonal properties
     tracepoints
         .into_iter()
         .map(|(a_len, b_len, (min_k, max_k))| {
-            if min_k.abs() <= 1 && max_k <= 1 {
+            if min_k <= 1 && max_k <= 1 {
                 // Case 1: No big diagonal offsets - use simplest representation
                 (a_len, b_len, None)
             } else if min_k == max_k {
@@ -200,7 +200,7 @@ pub fn cigar_to_variable_band_tracepoints(
 #[derive(Debug, Clone, PartialEq)]
 pub enum MixedRepresentation {
     /// Alignment segment represented by dual-band tracepoints
-    Tracepoint(usize, usize, (isize, isize)),
+    Tracepoint(usize, usize, (usize, usize)),
     /// Special CIGAR operation that should be preserved intact
     CigarOp(usize, char),
 }
@@ -236,7 +236,7 @@ pub fn cigar_to_mixed_double_band_tracepoints(
                     mixed_tracepoints.push(MixedRepresentation::Tracepoint(
                         cur_a_len,
                         cur_b_len,
-                        (min_diagonal, max_diagonal),
+                        (min_diagonal.abs() as usize, max_diagonal as usize),
                     ));
                     cur_a_len = 0;
                     cur_b_len = 0;
@@ -262,7 +262,7 @@ pub fn cigar_to_mixed_double_band_tracepoints(
                         mixed_tracepoints.push(MixedRepresentation::Tracepoint(
                             cur_a_len,
                             cur_b_len,
-                            (min_diagonal, max_diagonal),
+                            (min_diagonal.abs() as usize, max_diagonal as usize),
                         ));
                         cur_a_len = 0;
                         cur_b_len = 0;
@@ -281,7 +281,7 @@ pub fn cigar_to_mixed_double_band_tracepoints(
                         mixed_tracepoints.push(MixedRepresentation::Tracepoint(
                             cur_a_len,
                             cur_b_len,
-                            (min_diagonal, max_diagonal),
+                            (min_diagonal.abs() as usize, max_diagonal as usize),
                         ));
                         cur_a_len = 0;
                         cur_b_len = 0;
@@ -302,7 +302,7 @@ pub fn cigar_to_mixed_double_band_tracepoints(
                         mixed_tracepoints.push(MixedRepresentation::Tracepoint(
                             cur_a_len,
                             cur_b_len,
-                            (min_diagonal, max_diagonal),
+                            (min_diagonal.abs() as usize, max_diagonal as usize),
                         ));
                         cur_a_len = 0;
                         cur_b_len = 0;
@@ -343,7 +343,7 @@ pub fn cigar_to_mixed_double_band_tracepoints(
         mixed_tracepoints.push(MixedRepresentation::Tracepoint(
             cur_a_len,
             cur_b_len,
-            (min_diagonal, max_diagonal),
+            (min_diagonal.abs() as usize, max_diagonal as usize),
         ));
     }
     mixed_tracepoints
@@ -501,7 +501,7 @@ pub fn single_band_tracepoints_to_cigar(
 /// @param gap_ext2: Penalty for extending a gap (second gap type)
 /// @return Reconstructed CIGAR string
 pub fn double_band_tracepoints_to_cigar(
-    tracepoints: &[(usize, usize, (isize, isize))],
+    tracepoints: &[(usize, usize, (usize, usize))],
     a_seq: &[u8],
     b_seq: &[u8],
     a_start: usize,
@@ -535,7 +535,7 @@ pub fn double_band_tracepoints_to_cigar(
             let a_end = current_a + a_len;
             let b_end = current_b + b_len;
             aligner.set_heuristic(&HeuristicStrategy::BandedStatic {
-                band_min_k: (min_k - 1) as i32,
+                band_min_k: -(min_k as i32) - 1,
                 band_max_k: (max_k + 1) as i32,
             });
             let seg_ops = align_sequences_wfa(
@@ -571,7 +571,7 @@ pub fn double_band_tracepoints_to_cigar(
 /// @param gap_ext2: Penalty for extending a gap (second gap type)
 /// @return Reconstructed CIGAR string
 pub fn variable_band_tracepoints_to_cigar(
-    tracepoints: &[(usize, usize, Option<(isize, Option<isize>)>)],
+    tracepoints: &[(usize, usize, Option<(usize, Option<usize>)>)],
     a_seq: &[u8],
     b_seq: &[u8],
     a_start: usize,
@@ -608,24 +608,23 @@ pub fn variable_band_tracepoints_to_cigar(
             // Configure the aligner based on the diagonal information available
             match diagonal_info {
                 None => {
-                    // No diagonal constraints - use -2/+2 band
+                    // No big diagonal constraints - use -2/+2 band
                     aligner.set_heuristic(&HeuristicStrategy::BandedStatic {
                         band_min_k: -2,
                         band_max_k: 2,
                     });
                 },
-                Some((diagonal, None)) => {
+                Some((max_abs_k, None)) => {
                     // Single diagonal value - set a narrow band around it
-                    let k = diagonal as i32;
                     aligner.set_heuristic(&HeuristicStrategy::BandedStatic {
-                        band_min_k: k - 1,
-                        band_max_k: k + 1,
+                        band_min_k: -(max_abs_k as i32) - 1,
+                        band_max_k: (max_abs_k as i32) + 1,
                     });
                 },
                 Some((min_k, Some(max_k))) => {
                     // Full diagonal range - use the min/max values
                     aligner.set_heuristic(&HeuristicStrategy::BandedStatic {
-                        band_min_k: (min_k - 1) as i32,
+                        band_min_k: -(min_k as i32) - 1,
                         band_max_k: (max_k + 1) as i32,
                     });
                 },

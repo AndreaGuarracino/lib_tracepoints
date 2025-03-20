@@ -228,7 +228,6 @@ pub fn cigar_to_double_band_tracepoints(
     let mut current_diagonal : isize = 0;  // Current diagonal position
     let mut min_diagonal : isize = 0;      // Lowest diagonal reached
     let mut max_diagonal : isize = 0;      // Highest diagonal reached
-    //let mut max_gap : usize = 0;           // Maximum gap (indel) size
 
     for (mut len, op) in ops {
         match op {
@@ -249,7 +248,6 @@ pub fn cigar_to_double_band_tracepoints(
                         current_diagonal = 0;
                         min_diagonal = 0;
                         max_diagonal = 0;
-                        //max_gap = 0;
                     }
                 }
             },
@@ -265,7 +263,6 @@ pub fn cigar_to_double_band_tracepoints(
                         current_diagonal = 0;
                         min_diagonal = 0;
                         max_diagonal = 0;
-                        //max_gap = 0;
                     }
                     // In this case diagonals are ignored during reconstruction, so
                     // we save 0s to save space (less digits in the output PAF file) 
@@ -285,7 +282,6 @@ pub fn cigar_to_double_band_tracepoints(
                         current_diagonal = 0;
                         min_diagonal = 0;
                         max_diagonal = 0;
-                        //max_gap = 0;
                     }
                     // Then accumulate the entire indel.
                     if op == 'I' {
@@ -300,8 +296,6 @@ pub fn cigar_to_double_band_tracepoints(
                         current_diagonal -= len as isize;
                         min_diagonal = min_diagonal.min(current_diagonal);
                     }
-                    //max_gap = std::cmp::max(max_gap, len);
-
                     cur_diff += len;
                 }
             },

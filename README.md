@@ -44,6 +44,7 @@ cargo build --release
 - **Basic Tracepoints**: Simple `(a_len, b_len)` pairs for each segment
 - **Double-Band Tracepoints**: Enhanced `(a_len, b_len, (min_diagonal, max_diagonal))` triples for faster reconstruction
 - **Single-Band Tracepoints**: Memory-efficient `(a_len, b_len, max_abs_diagonal)` triples
+- **Variable-Band Tracepoints**: Adaptive representation that optimizes for different diagonal patterns
 - **Mixed Representation**: Preserves special CIGAR operations `(H, N, P, S)` that aren't suitable for reconstruction
 
 ## Usage
@@ -76,31 +77,6 @@ fn main() {
 }
 ```
 
-### Double-band tracepoints
-
-This approach stores both the minimum and maximum diagonal boundaries for each tracepoint. It provides more detailed boundary information for faster CIGAR string reconstruction but results in a slightly larger alignment representation.
-
-```rust
-use lib_tracepoints::{cigar_to_double_band_tracepoints, double_band_tracepoints_to_cigar};
-
-fn main() {
-    let cigar = "10=2D5=2I3=";
-    
-    // Store both min and max diagonal boundaries
-    let tracepoints: Vec<(usize, usize, (isize, isize))> = 
-        cigar_to_double_band_tracepoints(cigar, 5);
-
-    let a_seq = "ACGTACGTACACGTACGTAC";
-    let b_seq = "ACGTACGTACACGTACGTAC";
-    let reconstructed_cigar = double_band_tracepoints_to_cigar(
-        &tracepoints,
-        a_seq.as_bytes(),
-        b_seq.as_bytes(),
-        0, 0, 2, 4, 2, 6, 1
-    );
-}
-```
-
 ### Single-band tracepoints
 
 This approach stores only the maximum absolute diagonal boundary for each tracepoint. It's more memory-efficient but may require more computation during alignment reconstruction.
@@ -112,8 +88,7 @@ fn main() {
     let cigar = "10=2D5=2I3=";
     
     // Store only the maximum absolute diagonal value (more compact)
-    let single_band_tracepoints: Vec<(usize, usize, usize)> = 
-        cigar_to_single_band_tracepoints(cigar, 5);
+    let single_band_tracepoints = cigar_to_single_band_tracepoints(cigar, 5);
     
     let a_seq = "ACGTACGTACACGTACGTAC";
     let b_seq = "ACGTACGTACACGTACGTAC";
@@ -126,20 +101,68 @@ fn main() {
 }
 ```
 
+### Double-band tracepoints
+
+This approach stores both the minimum and maximum diagonal boundaries for each tracepoint. It provides more detailed boundary information for faster CIGAR string reconstruction but results in a slightly larger alignment representation.
+
+```rust
+use lib_tracepoints::{cigar_to_double_band_tracepoints, double_band_tracepoints_to_cigar};
+
+fn main() {
+    let cigar = "10=2D5=2I3=";
+    
+    // Store both min and max diagonal boundaries
+    let tracepoints = cigar_to_double_band_tracepoints(cigar, 5);
+
+    let a_seq = "ACGTACGTACACGTACGTAC";
+    let b_seq = "ACGTACGTACACGTACGTAC";
+    let reconstructed_cigar = double_band_tracepoints_to_cigar(
+        &tracepoints,
+        a_seq.as_bytes(),
+        b_seq.as_bytes(),
+        0, 0, 2, 4, 2, 6, 1
+    );
+}
+```
+
+### Variable-band tracepoints
+
+This approach adaptively selects the most efficient representation based on diagonal patterns, optimizing storage while maintaining alignment reconstruction speed.
+
+```rust
+use lib_tracepoints::{cigar_to_variable_band_tracepoints, variable_band_tracepoints_to_cigar};
+
+fn main() {
+    let cigar = "10=2D5=2I3=";
+    
+    // Use an optimized representation based on diagonal patterns
+    let variable_band_tracepoints = cigar_to_variable_band_tracepoints(cigar, 5);
+    
+    let a_seq = "ACGTACGTACACGTACGTAC";
+    let b_seq = "ACGTACGTACACGTACGTAC";
+    let reconstructed_cigar = variable_band_tracepoints_to_cigar(
+        &variable_band_tracepoints,
+        a_seq.as_bytes(),
+        b_seq.as_bytes(),
+        0, 0, 2, 4, 2, 6, 1
+    );
+}
+```
+
 ### Mixed representation
 
 This approach preserves special CIGAR operations that aren't suitable for WFA alignment.
 
 ```rust
-use lib_tracepoints::{cigar_to_mixed_tracepoints, mixed_tracepoints_to_cigar, MixedRepresentation};
+use lib_tracepoints::{cigar_to_mixed_double_band_tracepoints, mixed_double_band_tracepoints_to_cigar, MixedRepresentation};
 
 fn main() {
     let cigar = "5=2H3=";
-    let mixed_tracepoints = cigar_to_mixed_tracepoints(cigar, 2);
+    let mixed_tracepoints = cigar_to_mixed_double_band_tracepoints(cigar, 2);
     
     let a_seq = b"ACGTACGTAC";
     let b_seq = b"ACGTACGTAC";
-    let reconstructed_cigar = mixed_tracepoints_to_cigar(
+    let reconstructed_cigar = mixed_double_band_tracepoints_to_cigar(
         &mixed_tracepoints,
         a_seq,
         b_seq,

@@ -163,8 +163,8 @@ pub fn cigar_to_double_band_tracepoints(
 /// Convert a CIGAR string into variable-band tracepoints.
 ///
 /// Processes double-band tracepoints and applies optimization strategies:
-/// - abs(min_k) <= 1 and abs(max_k) <= 1 (it also happens when a_len == 0 or b_len == 0), stores only (a_len, b_len)
-/// - When min_k > 1 and max_k > 1 and min_k != max_k, stores (a_len, b_len, diagonal) with single diagonal value
+/// - min_k <= 1 and max_k <= 1 (it also happens when a_len == 0 or b_len == 0), stores only (a_len, b_len)
+/// - When min_k > 1 or max_k > 1, and min_k == max_k, stores (a_len, b_len, min_k) with a single diagonal value
 /// - Otherwise, stores (a_len, b_len, min_k, max_k) with both diagonal boundaries
 ///
 /// This approach optimizes memory usage while preserving necessary alignment information.
@@ -703,7 +703,7 @@ pub fn mixed_double_band_tracepoints_to_cigar(
                     let a_end = current_a + a_len;
                     let b_end = current_b + b_len;
                     aligner.set_heuristic(&HeuristicStrategy::BandedStatic {
-                        band_min_k: (min_k - 1) as i32,
+                        band_min_k: -(*min_k as i32) - 1,
                         band_max_k: (max_k + 1) as i32,
                     });
                     let seg_ops = align_sequences_wfa(
@@ -858,14 +858,14 @@ mod tests {
             (
                 2,
                 vec![(15, 17), (5, 3)],
-                vec![(15, 17, (-2, 0)), (5, 3, (0, 2))],
+                vec![(15, 17, (2, 0)), (5, 3, (0, 2))],
                 vec![(15, 17, 2), (5, 3, 2)],
             ),
             // Case 3: Allow up to 5 differences - combines all operations
             (
                 5,
                 vec![(20, 20)],
-                vec![(20, 20, (-2, 0))],
+                vec![(20, 20, (2, 0))],
                 vec![(20, 20, 2)],
             ),
         ];
@@ -1060,7 +1060,7 @@ mod tests {
                 );
 
                 // Check max_abs_k is correctly calculated
-                let expected_max_abs_k = std::cmp::max(-min_k, max_k) as usize;
+                let expected_max_abs_k = std::cmp::max(min_k, max_k);
                 assert_eq!(
                     max_abs_k, expected_max_abs_k,
                     "CIGAR '{}', segment {}: max_abs_k should be max(|min_k|, |max_k|)",

@@ -12,5 +12,4 @@ categories = ["science"]
 
 [dependencies]
 #lib_wfa2 = { path = "/home/guarracino/Dropbox/git/lib_wfa2"}
-#lib_wfa2 = { git = "https://github.com/AndreaGuarracino/lib_wfa2", branch = "bind-to-libwfa"}
-lib_wfa2 = { git = "https://github.com/AndreaGuarracino/lib_wfa2", rev = "c608c436a6753d2c21c97d9f5c338efae99d042b"}
+lib_wfa2 = { git = "https://github.com/AndreaGuarracino/lib_wfa2", rev = "fd0c39a0cd586efc4155e48fbd95aa0dfdef5f56"}

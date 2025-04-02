@@ -12,25 +12,29 @@ A Rust library for sequence alignment compression and reconstruction using trace
 
 ## Installation
 
-Add this to your `Cargo.toml`:
+Add this to the `Cargo.toml` file of the project where you want to use `lib_tracepoints`:
 
 ```toml
 [dependencies]
-lib_tracepoints = { git = "https://github.com/AndreaGuarracino/lib_tracepoints" }
-lib_wfa2 = { path = "/home/guarracino/Dropbox/git/lib_wfa2"}
+lib_wfa2 = { git = "https://github.com/AndreaGuarracino/lib_wfa2", rev = "fd0c39a0cd586efc4155e48fbd95aa0dfdef5f56"}
+lib_tracepoints = { git = "https://github.com/AndreaGuarracino/lib_tracepoints", rev = "e50dbf96e9d791321068578cc28934226af67949"}
 ```
 
-## Dependencies
-
-This library depends on `lib_wfa2`, which requires the `WFA2-lib` to be built first:
+This library depends on `lib_wfa2`, which requires the `WFA2-lib` (commit `df3dce4b99c37ac4f34fdcef74b774c80b7fadc4`) to be built first:
 
 ```shell
 git clone https://github.com/smarco/WFA2-lib
 cd WFA2-lib
+git checkout df3dce4b99c37ac4f34fdcef74b774c80b7fadc4
+
+# Temporary fix for the static-band issue (https://github.com/smarco/WFA2-lib/issues/110#issuecomment-2703867791)
+curl https://gist.githubusercontent.com/quim0/36a7f1a1c0f52d396e61eec94408cc46/raw/02b118bee2b9b3c6e690ae82f22650b07c719ad5/gistfile1.txt > fix.patch
+git apply fix.patch
+
 make clean all
 ```
 
-Then build your project with:
+Then build the project where you want to use `lib_tracepoints` with:
 
 ```shell
 # Point to your pre-built WFA2-lib directory

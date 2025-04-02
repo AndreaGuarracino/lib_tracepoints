@@ -84,7 +84,11 @@ pub fn cigar_to_double_band_tracepoints(
                     cur_diff += step;
                     len -= step;
                     if cur_diff == max_diff {
-                        tracepoints.push((cur_a_len, cur_b_len, (min_diagonal.abs() as usize, max_diagonal as usize)));
+                        tracepoints.push((
+                            cur_a_len,
+                            cur_b_len,
+                            (min_diagonal.abs() as usize, max_diagonal as usize),
+                        ));
                         cur_a_len = 0;
                         cur_b_len = 0;
                         cur_diff = 0;
@@ -99,7 +103,11 @@ pub fn cigar_to_double_band_tracepoints(
                 if len > max_diff {
                     // If the indel is too long, flush any pending segment first.
                     if cur_a_len > 0 || cur_b_len > 0 {
-                        tracepoints.push((cur_a_len, cur_b_len, (min_diagonal.abs() as usize, max_diagonal as usize)));
+                        tracepoints.push((
+                            cur_a_len,
+                            cur_b_len,
+                            (min_diagonal.abs() as usize, max_diagonal as usize),
+                        ));
                         cur_a_len = 0;
                         cur_b_len = 0;
                         cur_diff = 0;
@@ -118,7 +126,11 @@ pub fn cigar_to_double_band_tracepoints(
                 } else {
                     // If adding this indel would push the diff over the threshold, flush first.
                     if cur_diff + len > max_diff {
-                        tracepoints.push((cur_a_len, cur_b_len, (min_diagonal.abs() as usize, max_diagonal as usize)));
+                        tracepoints.push((
+                            cur_a_len,
+                            cur_b_len,
+                            (min_diagonal.abs() as usize, max_diagonal as usize),
+                        ));
                         cur_a_len = 0;
                         cur_b_len = 0;
                         cur_diff = 0;
@@ -155,7 +167,11 @@ pub fn cigar_to_double_band_tracepoints(
     }
     // Flush any remaining segment.
     if cur_a_len > 0 || cur_b_len > 0 {
-        tracepoints.push((cur_a_len, cur_b_len, (min_diagonal.abs() as usize, max_diagonal as usize)));
+        tracepoints.push((
+            cur_a_len,
+            cur_b_len,
+            (min_diagonal.abs() as usize, max_diagonal as usize),
+        ));
     }
     tracepoints
 }
@@ -604,7 +620,7 @@ pub fn variable_band_tracepoints_to_cigar(
         } else {
             let a_end = current_a + a_len;
             let b_end = current_b + b_len;
-            
+
             // Configure the aligner based on the diagonal information available
             match diagonal_info {
                 None => {
@@ -613,23 +629,23 @@ pub fn variable_band_tracepoints_to_cigar(
                         band_min_k: -2,
                         band_max_k: 2,
                     });
-                },
+                }
                 Some((max_abs_k, None)) => {
                     // Single diagonal value - set a narrow band around it
                     aligner.set_heuristic(&HeuristicStrategy::BandedStatic {
                         band_min_k: -(max_abs_k as i32) - 1,
                         band_max_k: (max_abs_k as i32) + 1,
                     });
-                },
+                }
                 Some((min_k, Some(max_k))) => {
                     // Full diagonal range - use the min/max values
                     aligner.set_heuristic(&HeuristicStrategy::BandedStatic {
                         band_min_k: -(min_k as i32) - 1,
                         band_max_k: (max_k + 1) as i32,
                     });
-                },
+                }
             }
-            
+
             let seg_ops = align_sequences_wfa(
                 &a_seq[current_a..a_end],
                 &b_seq[current_b..b_end],
@@ -640,7 +656,7 @@ pub fn variable_band_tracepoints_to_cigar(
             current_b = b_end;
         }
     }
-    
+
     let merged = merge_cigar_ops(cigar_ops);
     cigar_ops_to_cigar_string(&merged)
 }
@@ -862,12 +878,7 @@ mod tests {
                 vec![(15, 17, 2), (5, 3, 2)],
             ),
             // Case 3: Allow up to 5 differences - combines all operations
-            (
-                5,
-                vec![(20, 20)],
-                vec![(20, 20, (2, 0))],
-                vec![(20, 20, 2)],
-            ),
+            (5, vec![(20, 20)], vec![(20, 20, (2, 0))], vec![(20, 20, 2)]),
         ];
 
         // Run each test case

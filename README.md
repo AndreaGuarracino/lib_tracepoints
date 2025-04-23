@@ -16,21 +16,16 @@ Add this to the `Cargo.toml` file of the project where you want to use `lib_trac
 
 ```toml
 [dependencies]
-lib_wfa2 = { git = "https://github.com/AndreaGuarracino/lib_wfa2", rev = "fd0c39a0cd586efc4155e48fbd95aa0dfdef5f56"}
-lib_tracepoints = { git = "https://github.com/AndreaGuarracino/lib_tracepoints", rev = "8a1b0e1677650af1de1aa5f05648b33eee0e7e04"}
+lib_wfa2 = { git = "https://github.com/AndreaGuarracino/lib_wfa2", rev = "2ae5e70f98fbd8a0deb128bcd141ca0115e0c6fa"}
+lib_tracepoints = { git = "https://github.com/AndreaGuarracino/lib_tracepoints"}
 ```
 
-This library depends on `lib_wfa2`, which requires the `WFA2-lib` (commit `df3dce4b99c37ac4f34fdcef74b774c80b7fadc4`) to be built first:
+This library depends on `lib_wfa2`, which requires the `WFA2-lib` (commit `49c255df126ee536fe92caff7a9f7c183ec3ff29`) to be built first:
 
 ```shell
 git clone https://github.com/smarco/WFA2-lib
 cd WFA2-lib
-git checkout df3dce4b99c37ac4f34fdcef74b774c80b7fadc4
-
-# Temporary fix for the static-band issue (https://github.com/smarco/WFA2-lib/issues/110#issuecomment-2703867791)
-curl https://gist.githubusercontent.com/quim0/36a7f1a1c0f52d396e61eec94408cc46/raw/02b118bee2b9b3c6e690ae82f22650b07c719ad5/gistfile1.txt > fix.patch
-git apply fix.patch
-
+git checkout 49c255df126ee536fe92caff7a9f7c183ec3ff29
 make clean all
 ```
 

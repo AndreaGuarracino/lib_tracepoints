@@ -551,8 +551,8 @@ pub fn double_band_tracepoints_to_cigar(
             let a_end = current_a + a_len;
             let b_end = current_b + b_len;
             aligner.set_heuristic(&HeuristicStrategy::BandedStatic {
-                band_min_k: -(min_k as i32) - 1,
-                band_max_k: (max_k + 1) as i32,
+                band_min_k: -(min_k as i32) - 4,
+                band_max_k: (max_k + 4) as i32,
             });
             let seg_ops = align_sequences_wfa(
                 &a_seq[current_a..a_end],
@@ -640,8 +640,8 @@ pub fn variable_band_tracepoints_to_cigar(
                 Some((min_k, Some(max_k))) => {
                     // Full diagonal range - use the min/max values
                     aligner.set_heuristic(&HeuristicStrategy::BandedStatic {
-                        band_min_k: -(min_k as i32) - 1,
-                        band_max_k: (max_k + 1) as i32,
+                        band_min_k: -(min_k as i32) - 4,
+                        band_max_k: (max_k + 4) as i32,
                     });
                 }
             }
@@ -719,8 +719,8 @@ pub fn mixed_double_band_tracepoints_to_cigar(
                     let a_end = current_a + a_len;
                     let b_end = current_b + b_len;
                     aligner.set_heuristic(&HeuristicStrategy::BandedStatic {
-                        band_min_k: -(*min_k as i32) - 1,
-                        band_max_k: (max_k + 1) as i32,
+                        band_min_k: -(*min_k as i32) - 4,
+                        band_max_k: (max_k + 4) as i32,
                     });
                     let seg_ops = align_sequences_wfa(
                         &a_seq[current_a..a_end],

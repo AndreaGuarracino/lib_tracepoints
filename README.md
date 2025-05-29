@@ -16,16 +16,16 @@ Add this to the `Cargo.toml` file of the project where you want to use `lib_trac
 
 ```toml
 [dependencies]
-lib_wfa2 = { git = "https://github.com/AndreaGuarracino/lib_wfa2", rev = "2ae5e70f98fbd8a0deb128bcd141ca0115e0c6fa"}
+lib_wfa2 = { git = "https://github.com/AndreaGuarracino/lib_wfa2"}
 lib_tracepoints = { git = "https://github.com/AndreaGuarracino/lib_tracepoints"}
 ```
 
-This library depends on `lib_wfa2`, which requires the `WFA2-lib` (commit `49c255df126ee536fe92caff7a9f7c183ec3ff29`) to be built first:
+This library depends on `lib_wfa2`, which requires the `WFA2-lib` (commit `3c1734e9bb319c7782ae6845e627612ff157d1cc`) to be built first:
 
 ```shell
 git clone https://github.com/smarco/WFA2-lib
 cd WFA2-lib
-git checkout 49c255df126ee536fe92caff7a9f7c183ec3ff29
+git checkout 3c1734e9bb319c7782ae6845e627612ff157d1cc
 make clean all
 ```
 

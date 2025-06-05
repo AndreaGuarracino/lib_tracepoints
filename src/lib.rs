@@ -79,22 +79,54 @@ pub fn cigar_to_double_band_tracepoints(
                 while len > 0 {
                     let remaining = max_diff.saturating_sub(cur_diff);
                     let step = min(len, remaining);
-                    cur_a_len += step;
-                    cur_b_len += step;
-                    cur_diff += step;
-                    len -= step;
-                    if cur_diff == max_diff {
-                        tracepoints.push((
-                            cur_a_len,
-                            cur_b_len,
-                            (min_diagonal.abs() as usize, max_diagonal as usize),
-                        ));
-                        cur_a_len = 0;
-                        cur_b_len = 0;
-                        cur_diff = 0;
-                        current_diagonal = 0;
-                        min_diagonal = 0;
-                        max_diagonal = 0;
+                    
+                    // Handle the case when max_diff = 0 or no room left in current segment
+                    if step == 0 {
+                        // Flush current segment if it exists
+                        if cur_a_len > 0 || cur_b_len > 0 {
+                            tracepoints.push((
+                                cur_a_len,
+                                cur_b_len,
+                                (min_diagonal.abs() as usize, max_diagonal as usize),
+                            ));
+                            cur_a_len = 0;
+                            cur_b_len = 0;
+                            cur_diff = 0;
+                            current_diagonal = 0;
+                            min_diagonal = 0;
+                            max_diagonal = 0;
+                        }
+                        
+                        // Create a segment with just 1 mismatch
+                        if max_diff == 0 {
+                            tracepoints.push((1, 1, (0, 0)));
+                            len -= 1;
+                        } else {
+                            // This case shouldn't happen, but handle it gracefully
+                            cur_a_len = 1;
+                            cur_b_len = 1;
+                            cur_diff = 1;
+                            len -= 1;
+                        }
+                    } else {
+                        cur_a_len += step;
+                        cur_b_len += step;
+                        cur_diff += step;
+                        len -= step;
+
+                        if cur_diff == max_diff {
+                            tracepoints.push((
+                                cur_a_len,
+                                cur_b_len,
+                                (min_diagonal.abs() as usize, max_diagonal as usize),
+                            ));
+                            cur_a_len = 0;
+                            cur_b_len = 0;
+                            cur_diff = 0;
+                            current_diagonal = 0;
+                            min_diagonal = 0;
+                            max_diagonal = 0;
+                        }
                     }
                 }
             }
@@ -270,22 +302,54 @@ pub fn cigar_to_mixed_double_band_tracepoints(
                 while len > 0 {
                     let remaining = max_diff.saturating_sub(cur_diff);
                     let step = min(len, remaining);
-                    cur_a_len += step;
-                    cur_b_len += step;
-                    cur_diff += step;
-                    len -= step;
-                    if cur_diff == max_diff {
-                        mixed_tracepoints.push(MixedRepresentation::Tracepoint(
-                            cur_a_len,
-                            cur_b_len,
-                            (min_diagonal.abs() as usize, max_diagonal as usize),
-                        ));
-                        cur_a_len = 0;
-                        cur_b_len = 0;
-                        cur_diff = 0;
-                        current_diagonal = 0;
-                        min_diagonal = 0;
-                        max_diagonal = 0;
+                    
+                    // Handle the case when max_diff = 0 or no room left in current segment
+                    if step == 0 {
+                        // Flush current segment if it exists
+                        if cur_a_len > 0 || cur_b_len > 0 {
+                            mixed_tracepoints.push(MixedRepresentation::Tracepoint(
+                                cur_a_len,
+                                cur_b_len,
+                                (min_diagonal.abs() as usize, max_diagonal as usize),
+                            ));
+                            cur_a_len = 0;
+                            cur_b_len = 0;
+                            cur_diff = 0;
+                            current_diagonal = 0;
+                            min_diagonal = 0;
+                            max_diagonal = 0;
+                        }
+                        
+                        // Create a segment with just 1 mismatch
+                        if max_diff == 0 {
+                            mixed_tracepoints.push(MixedRepresentation::Tracepoint(1, 1, (0, 0)));
+                            len -= 1;
+                        } else {
+                            // This case shouldn't happen, but handle it gracefully
+                            cur_a_len = 1;
+                            cur_b_len = 1;
+                            cur_diff = 1;
+                            len -= 1;
+                        }
+                    } else {
+                        cur_a_len += step;
+                        cur_b_len += step;
+                        cur_diff += step;
+                        len -= step;
+                        
+                        if cur_diff == max_diff {
+                            mixed_tracepoints.push(MixedRepresentation::Tracepoint(
+                                cur_a_len,
+                                cur_b_len,
+                                (min_diagonal.abs() as usize, max_diagonal as usize),
+                            ));
+                            cur_a_len = 0;
+                            cur_b_len = 0;
+                            cur_diff = 0;
+                            current_diagonal = 0;
+                            min_diagonal = 0;
+                            max_diagonal = 0;
+                        }
                     }
                 }
             }

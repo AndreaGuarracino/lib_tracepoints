@@ -492,8 +492,8 @@ pub fn tracepoints_to_cigar(
             current_b = b_end;
         }
     }
-    let merged = merge_cigar_ops(cigar_ops);
-    cigar_ops_to_cigar_string(&merged)
+    merge_cigar_ops(&mut cigar_ops);
+    cigar_ops_to_cigar_string(&cigar_ops)
 }
 
 /// Reconstruct a CIGAR string from single-band tracepoints.
@@ -560,8 +560,8 @@ pub fn single_band_tracepoints_to_cigar(
             current_b = b_end;
         }
     }
-    let merged = merge_cigar_ops(cigar_ops);
-    cigar_ops_to_cigar_string(&merged)
+    merge_cigar_ops(&mut cigar_ops);
+    cigar_ops_to_cigar_string(&cigar_ops)
 }
 
 /// Reconstruct a CIGAR string from double-band tracepoints.
@@ -628,8 +628,8 @@ pub fn double_band_tracepoints_to_cigar(
             current_b = b_end;
         }
     }
-    let merged = merge_cigar_ops(cigar_ops);
-    cigar_ops_to_cigar_string(&merged)
+    merge_cigar_ops(&mut cigar_ops);
+    cigar_ops_to_cigar_string(&cigar_ops)
 }
 
 /// Reconstruct a CIGAR string from variable-band tracepoints.
@@ -721,8 +721,8 @@ pub fn variable_band_tracepoints_to_cigar(
         }
     }
 
-    let merged = merge_cigar_ops(cigar_ops);
-    cigar_ops_to_cigar_string(&merged)
+    merge_cigar_ops(&mut cigar_ops);
+    cigar_ops_to_cigar_string(&cigar_ops)
 }
 
 /// Reconstruct a CIGAR string from mixed representation.
@@ -800,34 +800,38 @@ pub fn mixed_double_band_tracepoints_to_cigar(
     }
 
     // Merge consecutive CIGAR operations of the same type
-    let merged = merge_cigar_ops(cigar_ops);
-    cigar_ops_to_cigar_string(&merged)
+    merge_cigar_ops(&mut cigar_ops);
+    cigar_ops_to_cigar_string(&cigar_ops)
 }
 
 // Helper functions
 
-/// Merge consecutive CIGAR operations of the same type.
+/// Merge in-place consecutive CIGAR operations of the same type.
 ///
 /// @param ops: Vector of (length, operation) pairs
-/// @return Vector with adjacent identical operations combined
-fn merge_cigar_ops(ops: Vec<(usize, char)>) -> Vec<(usize, char)> {
-    if ops.len() <= 1 {
-        return ops;
-    }
 
-    let mut merged = Vec::with_capacity(ops.len());
-    let (mut count, mut op) = ops[0];
-    for &(c, o) in ops.iter().skip(1) {
-        if o == op {
-            count += c;
+fn merge_cigar_ops(ops: &mut Vec<(usize, char)>) {
+    if ops.len() <= 1 {
+        return;
+    }
+    
+    let mut write_idx = 0;
+    let mut current_count = ops[0].0;
+    let mut current_op = ops[0].1;
+    
+    for read_idx in 1..ops.len() {
+        let (count, op) = ops[read_idx];
+        if op == current_op {
+            current_count += count;
         } else {
-            merged.push((count, op));
-            op = o;
-            count = c;
+            ops[write_idx] = (current_count, current_op);
+            write_idx += 1;
+            current_count = count;
+            current_op = op;
         }
     }
-    merged.push((count, op));
-    merged
+    ops[write_idx] = (current_count, current_op);
+    ops.truncate(write_idx + 1);
 }
 
 /// Parse a CIGAR string into a vector of (length, operation) pairs.

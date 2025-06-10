@@ -4,7 +4,7 @@ A Rust library for sequence alignment compression and reconstruction using trace
 
 ## Overview
 
-`lib_tracepoints` provides utilities for converting between CIGAR strings and various tracepoint representations for efficient alignment storage in bioinformatics applications. The library enables:
+`lib_tracepoints` provides utilities for converting between CIGAR strings and tracepoint representations for efficient alignment storage. The library enables:
 
 - Converting CIGAR strings to tracepoints
 - Reconstructing CIGAR strings from tracepoints
@@ -12,29 +12,16 @@ A Rust library for sequence alignment compression and reconstruction using trace
 
 ## Installation
 
-Add this to the `Cargo.toml` file of the project where you want to use `lib_tracepoints`:
+Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-lib_wfa2 = { git = "https://github.com/AndreaGuarracino/lib_wfa2"}
-lib_tracepoints = { git = "https://github.com/AndreaGuarracino/lib_tracepoints"}
+lib_tracepoints = { git = "https://github.com/AndreaGuarracino/lib_tracepoints" }
 ```
 
-This library depends on `lib_wfa2`, which requires the `WFA2-lib` (commit `3c1734e9bb319c7782ae6845e627612ff157d1cc`) to be built first:
+Then simply build your project:
 
 ```shell
-git clone https://github.com/smarco/WFA2-lib
-cd WFA2-lib
-git checkout 3c1734e9bb319c7782ae6845e627612ff157d1cc
-make clean all
-```
-
-Then build the project where you want to use `lib_tracepoints` with:
-
-```shell
-# Point to your pre-built WFA2-lib directory
-export WFA2LIB_PATH="/path/to/WFA2-lib"
-# Build your project
 cargo build --release
 ```
 

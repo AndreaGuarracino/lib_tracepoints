@@ -10,6 +10,31 @@ pub enum MixedRepresentation {
     CigarOp(usize, char),
 }
 
+/// Convert a CIGAR string into variable tracepoints with length optimization.
+///
+/// Similar to cigar_to_tracepoints but optimizes storage by using a single value
+/// when a_len == b_len. The representation is (length, Option<b_length>):
+/// - If a_len == b_len: stores (a_len, None)
+/// - If a_len != b_len: stores (a_len, Some(b_len))
+///
+/// @param cigar: The CIGAR string to process
+/// @param max_diff: Maximum number of differences allowed in each segment
+/// @return Vector of variable tracepoints containing (a_segment_length, Option<b_segment_length>)
+pub fn cigar_to_variable_tracepoints(cigar: &str, max_diff: usize) -> Vec<(usize, Option<usize>)> {
+    let basic_tracepoints = cigar_to_tracepoints(cigar, max_diff);
+    
+    basic_tracepoints
+        .into_iter()
+        .map(|(a_len, b_len)| {
+            if a_len == b_len {
+                (a_len, None)
+            } else {
+                (a_len, Some(b_len))
+            }
+        })
+        .collect()
+}
+
 /// Convert a CIGAR string into tracepoints.
 ///
 /// Segments a CIGAR string into tracepoints with at most `max_diff` differences per segment.
@@ -250,6 +275,62 @@ pub fn cigar_to_mixed_tracepoints(cigar: &str, max_diff: usize) -> Vec<MixedRepr
 }
 
 
+
+/// Reconstruct a CIGAR string from variable tracepoints.
+///
+/// Converts variable tracepoints back to regular tracepoints and then reconstructs CIGAR.
+/// The variable format (length, Option<b_length>) is expanded to (a_len, b_len):
+/// - (len, None) becomes (len, len)
+/// - (a_len, Some(b_len)) becomes (a_len, b_len)
+///
+/// @param variable_tracepoints: Vector of (a_len, Option<b_len>) pairs
+/// @param a_seq: Reference sequence
+/// @param b_seq: Query sequence
+/// @param a_start: Starting position in reference sequence
+/// @param b_start: Starting position in query sequence
+/// @param mismatch: Penalty for mismatches
+/// @param gap_open1: Penalty for opening a gap (first gap type)
+/// @param gap_ext1: Penalty for extending a gap (first gap type)
+/// @param gap_open2: Penalty for opening a gap (second gap type)
+/// @param gap_ext2: Penalty for extending a gap (second gap type)
+/// @return Reconstructed CIGAR string
+pub fn variable_tracepoints_to_cigar(
+    variable_tracepoints: &[(usize, Option<usize>)],
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    b_start: usize,
+    mismatch: i32,
+    gap_open1: i32,
+    gap_ext1: i32,
+    gap_open2: i32,
+    gap_ext2: i32,
+) -> String {
+    // Convert variable tracepoints back to regular tracepoints
+    let regular_tracepoints: Vec<(usize, usize)> = variable_tracepoints
+        .iter()
+        .map(|(a_len, b_len_opt)| {
+            match b_len_opt {
+                None => (*a_len, *a_len),
+                Some(b_len) => (*a_len, *b_len),
+            }
+        })
+        .collect();
+    
+    // Use existing tracepoints_to_cigar function
+    tracepoints_to_cigar(
+        &regular_tracepoints,
+        a_seq,
+        b_seq,
+        a_start,
+        b_start,
+        mismatch,
+        gap_open1,
+        gap_ext1,
+        gap_open2,
+        gap_ext2,
+    )
+}
 
 /// Reconstruct a CIGAR string from tracepoints.
 ///
@@ -767,5 +848,146 @@ mod tests {
                 max_diff
             );
         }
+    }
+
+    #[test]
+    fn test_variable_tracepoint_generation() {
+        // Test CIGAR string
+        let cigar = "10=2D5=2I3=";
+
+        // Define test cases: (max_diff, expected_variable_tracepoints)
+        let test_cases = vec![
+            // Case 1: No differences allowed - each operation becomes its own segment
+            (0, vec![(10, None), (0, Some(2)), (5, None), (2, Some(0)), (3, None)]),
+            // Case 2: Allow up to 2 differences in each segment
+            (2, vec![(15, Some(17)), (5, Some(3))]),
+            // Case 3: Allow up to 5 differences - combines all operations
+            (5, vec![(20, None)]),
+        ];
+
+        // Run each test case
+        for (i, (max_diff, expected_variable_tracepoints)) in test_cases.iter().enumerate() {
+            // Get actual results
+            let variable_tracepoints = cigar_to_variable_tracepoints(cigar, *max_diff);
+
+            // Check variable tracepoints
+            assert_eq!(
+                variable_tracepoints,
+                *expected_variable_tracepoints,
+                "Test case {}: Variable tracepoints with max_diff={} incorrect",
+                i + 1,
+                max_diff
+            );
+        }
+    }
+
+    #[test]
+    fn test_variable_tracepoints_roundtrip() {
+        let original_cigar = "1=1I18=";
+        let a_seq = b"ACGTACGTACACGTACGTAC"; // 20 bases
+        let b_seq = b"AGTACGTACACGTACGTAC"; // 19 bases (missing C)
+        let max_diff = 5;
+
+        // Test variable tracepoints roundtrip
+        let variable_tracepoints = cigar_to_variable_tracepoints(original_cigar, max_diff);
+        let reconstructed_cigar = variable_tracepoints_to_cigar(
+            &variable_tracepoints,
+            a_seq,
+            b_seq,
+            0,
+            0, // sequences and start positions
+            2,
+            4,
+            2,
+            6,
+            1, // alignment penalties
+        );
+        assert_eq!(
+            reconstructed_cigar, original_cigar,
+            "Variable tracepoint roundtrip failed"
+        );
+    }
+
+    #[test]
+    fn test_variable_tracepoints_optimization() {
+        // Test cases where a_len == b_len should be optimized
+        let test_cases = vec![
+            // Equal lengths should use None
+            ("5=", 10, vec![(5, None)]),
+            ("3=2X4=", 10, vec![(9, None)]),
+            // Different lengths should use Some
+            ("5I", 10, vec![(5, Some(0))]),
+            ("3D", 10, vec![(0, Some(3))]),
+            ("2=3I1=", 10, vec![(6, Some(3))]),
+        ];
+
+        for (i, (cigar, max_diff, expected)) in test_cases.iter().enumerate() {
+            let result = cigar_to_variable_tracepoints(cigar, *max_diff);
+            assert_eq!(
+                result,
+                *expected,
+                "Optimization test case {}: Failed for CIGAR '{}' with max_diff={}",
+                i + 1,
+                cigar,
+                max_diff
+            );
+        }
+    }
+
+    #[test]
+    fn test_variable_tracepoints_conversion() {
+        // Test the conversion logic directly without WFA complexity
+        let variable_tracepoints = vec![
+            (5, None),        // Should become (5, 5)
+            (3, Some(0)),     // Should become (3, 0)
+            (0, Some(2)),     // Should become (0, 2)  
+            (4, Some(6)),     // Should become (4, 6)
+        ];
+
+        // Test the conversion logic used in variable_tracepoints_to_cigar
+        let converted_regular: Vec<(usize, usize)> = variable_tracepoints
+            .iter()
+            .map(|(a_len, b_len_opt)| {
+                match b_len_opt {
+                    None => (*a_len, *a_len),
+                    Some(b_len) => (*a_len, *b_len),
+                }
+            })
+            .collect();
+
+        let expected_regular = vec![
+            (5, 5),
+            (3, 0),
+            (0, 2),
+            (4, 6),
+        ];
+
+        assert_eq!(
+            converted_regular, expected_regular,
+            "Variable to regular tracepoint conversion failed"
+        );
+
+        // Test the reverse conversion (regular to variable)
+        let reconverted_variable: Vec<(usize, Option<usize>)> = expected_regular
+            .iter()
+            .map(|(a_len, b_len)| {
+                if a_len == b_len {
+                    (*a_len, None)
+                } else {
+                    (*a_len, Some(*b_len))
+                }
+            })
+            .collect();
+
+        assert_eq!(
+            reconverted_variable, variable_tracepoints,
+            "Regular to variable tracepoint conversion failed"
+        );
+
+        // Verify optimization: None should be used when a_len == b_len
+        assert!(variable_tracepoints.iter().any(|(_, b_opt)| b_opt.is_none()),
+               "Variable tracepoints should have at least one optimized entry (None)");
+        assert!(variable_tracepoints.iter().any(|(_, b_opt)| b_opt.is_some()),
+               "Variable tracepoints should have at least one unoptimized entry (Some)");
     }
 }

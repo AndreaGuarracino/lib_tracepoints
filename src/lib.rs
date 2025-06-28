@@ -2,7 +2,7 @@ use lib_wfa2::affine_wavefront::{AffineWavefronts, AlignmentStatus};
 use std::cmp::min;
 
 /// Represents a CIGAR segment that can be either aligned or preserved as-is
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum MixedRepresentation {
     /// Alignment segment represented by tracepoints
     Tracepoint(usize, usize),
@@ -10,20 +10,175 @@ pub enum MixedRepresentation {
     CigarOp(usize, char),
 }
 
-/// Convert a CIGAR string into variable tracepoints with length optimization.
-///
-/// Similar to cigar_to_tracepoints but optimizes storage by using a single value
-/// when a_len == b_len. The representation is (length, Option<b_length>):
-/// - If a_len == b_len: stores (a_len, None)
-/// - If a_len != b_len: stores (a_len, Some(b_len))
-///
-/// @param cigar: The CIGAR string to process
-/// @param max_diff: Maximum number of differences allowed in each segment
-/// @return Vector of variable tracepoints containing (a_segment_length, Option<b_segment_length>)
+/// Output type for tracepoint processing
+enum TracepointOutput {
+    /// Basic tracepoints as (a_len, b_len) pairs
+    Basic(Vec<(usize, usize)>),
+    /// Mixed representation with special CIGAR operations preserved
+    Mixed(Vec<MixedRepresentation>),
+}
+
+/// Core function to process CIGAR into tracepoints with unified logic
+/// 
+/// Handles both basic and mixed tracepoint generation to eliminate code duplication.
+/// Special operations (H, N, P, S) are preserved when preserve_special is true.
+fn process_cigar_to_tracepoints(cigar: &str, max_diff: usize, preserve_special: bool) -> TracepointOutput {
+    let ops = cigar_str_to_cigar_ops(cigar);
+    let mut basic_tracepoints = Vec::new();
+    let mut mixed_tracepoints = Vec::new();
+    let mut cur_a_len = 0;
+    let mut cur_b_len = 0;
+    let mut cur_diff = 0;
+
+    for (mut len, op) in ops {
+        match op {
+            'H' | 'N' | 'P' | 'S' if preserve_special => {
+                // Preserve special operations as-is in mixed mode
+                if cur_a_len > 0 || cur_b_len > 0 {
+                    mixed_tracepoints.push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
+                    cur_a_len = 0;
+                    cur_b_len = 0;
+                    cur_diff = 0;
+                }
+                mixed_tracepoints.push(MixedRepresentation::CigarOp(len, op));
+            }
+            'X' => {
+                // Mismatches can be split across segments
+                while len > 0 {
+                    let remaining = max_diff.saturating_sub(cur_diff);
+                    let step = min(len, remaining);
+
+                    if step == 0 {
+                        if cur_a_len > 0 || cur_b_len > 0 {
+                            if preserve_special {
+                                mixed_tracepoints.push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
+                            } else {
+                                basic_tracepoints.push((cur_a_len, cur_b_len));
+                            }
+                            cur_a_len = 0;
+                            cur_b_len = 0;
+                            cur_diff = 0;
+                        }
+
+                        if max_diff == 0 {
+                            if preserve_special {
+                                mixed_tracepoints.push(MixedRepresentation::Tracepoint(1, 1));
+                            } else {
+                                basic_tracepoints.push((1, 1));
+                            }
+                            len -= 1;
+                        } else {
+                            cur_a_len = 1;
+                            cur_b_len = 1;
+                            cur_diff = 1;
+                            len -= 1;
+                        }
+                    } else {
+                        cur_a_len += step;
+                        cur_b_len += step;
+                        cur_diff += step;
+                        len -= step;
+
+                        if cur_diff == max_diff {
+                            if preserve_special {
+                                mixed_tracepoints.push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
+                            } else {
+                                basic_tracepoints.push((cur_a_len, cur_b_len));
+                            }
+                            cur_a_len = 0;
+                            cur_b_len = 0;
+                            cur_diff = 0;
+                        }
+                    }
+                }
+            }
+            'I' | 'D' => {
+                // Indels are kept together when possible
+                if len > max_diff {
+                    if cur_a_len > 0 || cur_b_len > 0 {
+                        if preserve_special {
+                            mixed_tracepoints.push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
+                        } else {
+                            basic_tracepoints.push((cur_a_len, cur_b_len));
+                        }
+                        cur_a_len = 0;
+                        cur_b_len = 0;
+                        cur_diff = 0;
+                    }
+                    let (a_add, b_add) = if op == 'I' { (len, 0) } else { (0, len) };
+                    if preserve_special {
+                        mixed_tracepoints.push(MixedRepresentation::Tracepoint(a_add, b_add));
+                    } else {
+                        basic_tracepoints.push((a_add, b_add));
+                    }
+                } else {
+                    if cur_diff + len > max_diff {
+                        if preserve_special {
+                            mixed_tracepoints.push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
+                        } else {
+                            basic_tracepoints.push((cur_a_len, cur_b_len));
+                        }
+                        cur_a_len = 0;
+                        cur_b_len = 0;
+                        cur_diff = 0;
+                    }
+                    if op == 'I' {
+                        cur_a_len += len;
+                    } else {
+                        cur_b_len += len;
+                    }
+                    cur_diff += len;
+                }
+            }
+            '=' | 'M' => {
+                // Matches don't count as differences
+                cur_a_len += len;
+                cur_b_len += len;
+            }
+            _ => panic!("Invalid CIGAR operation: {}", op),
+        }
+    }
+
+    if cur_a_len > 0 || cur_b_len > 0 {
+        if preserve_special {
+            mixed_tracepoints.push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
+        } else {
+            basic_tracepoints.push((cur_a_len, cur_b_len));
+        }
+    }
+
+    if preserve_special {
+        TracepointOutput::Mixed(mixed_tracepoints)
+    } else {
+        TracepointOutput::Basic(basic_tracepoints)
+    }
+}
+
+/// Convert CIGAR string into basic tracepoints
+/// 
+/// Segments CIGAR into tracepoints with at most max_diff differences per segment.
+pub fn cigar_to_tracepoints(cigar: &str, max_diff: usize) -> Vec<(usize, usize)> {
+    match process_cigar_to_tracepoints(cigar, max_diff, false) {
+        TracepointOutput::Basic(tracepoints) => tracepoints,
+        _ => unreachable!(),
+    }
+}
+
+/// Convert CIGAR string into mixed representation tracepoints
+/// 
+/// Like cigar_to_tracepoints but preserves special operations (H, N, P, S).
+pub fn cigar_to_mixed_tracepoints(cigar: &str, max_diff: usize) -> Vec<MixedRepresentation> {
+    match process_cigar_to_tracepoints(cigar, max_diff, true) {
+        TracepointOutput::Mixed(tracepoints) => tracepoints,
+        _ => unreachable!(),
+    }
+}
+
+/// Convert CIGAR string into variable tracepoints with length optimization
+/// 
+/// Uses (length, None) when a_len == b_len, otherwise (a_len, Some(b_len)).
 pub fn cigar_to_variable_tracepoints(cigar: &str, max_diff: usize) -> Vec<(usize, Option<usize>)> {
-    let basic_tracepoints = cigar_to_tracepoints(cigar, max_diff);
-    
-    basic_tracepoints
+    cigar_to_tracepoints(cigar, max_diff)
         .into_iter()
         .map(|(a_len, b_len)| {
             if a_len == b_len {
@@ -35,335 +190,18 @@ pub fn cigar_to_variable_tracepoints(cigar: &str, max_diff: usize) -> Vec<(usize
         .collect()
 }
 
-/// Convert a CIGAR string into tracepoints.
-///
-/// Segments a CIGAR string into tracepoints with at most `max_diff` differences per segment.
-/// - Match operations ('=' and 'M') don't count as differences.
-/// - Mismatches ('X') can be split across segments
-/// - Indels ('I', 'D') are kept in a single segment when possible
-/// - Long indels exceeding max_diff become their own segments
-///
-/// @param cigar: The CIGAR string to process
-/// @param max_diff: Maximum number of differences allowed in each segment
-/// @return Vector of tracepoints containing (a_segment_length, b_segment_length)
-pub fn cigar_to_tracepoints(cigar: &str, max_diff: usize) -> Vec<(usize, usize)> {
-    let ops = cigar_str_to_cigar_ops(cigar);
-    let mut tracepoints = Vec::new();
-
-    let mut cur_a_len = 0;
-    let mut cur_b_len = 0;
-    let mut cur_diff = 0;
-
-    for (mut len, op) in ops {
-        match op {
-            'X' => {
-                // X is splittable
-                while len > 0 {
-                    let remaining = max_diff.saturating_sub(cur_diff);
-                    let step = min(len, remaining);
-
-                    // Handle the case when max_diff = 0 or no room left in current segment
-                    if step == 0 {
-                        // Flush current segment if it exists
-                        if cur_a_len > 0 || cur_b_len > 0 {
-                            tracepoints.push((cur_a_len, cur_b_len));
-                            cur_a_len = 0;
-                            cur_b_len = 0;
-                            cur_diff = 0;
-                        }
-
-                        // Create a segment with just 1 mismatch
-                        if max_diff == 0 {
-                            tracepoints.push((1, 1));
-                            len -= 1;
-                        } else {
-                            // This case shouldn't happen, but handle it gracefully
-                            cur_a_len = 1;
-                            cur_b_len = 1;
-                            cur_diff = 1;
-                            len -= 1;
-                        }
-                    } else {
-                        cur_a_len += step;
-                        cur_b_len += step;
-                        cur_diff += step;
-                        len -= step;
-
-                        if cur_diff == max_diff {
-                            tracepoints.push((cur_a_len, cur_b_len));
-                            cur_a_len = 0;
-                            cur_b_len = 0;
-                            cur_diff = 0;
-                        }
-                    }
-                }
-            }
-            'I' | 'D' => {
-                // For indels, which are unsplittable, try to incorporate into the current tracepoint.
-                if len > max_diff {
-                    // If the indel is too long, flush any pending segment first.
-                    if cur_a_len > 0 || cur_b_len > 0 {
-                        tracepoints.push((cur_a_len, cur_b_len));
-                        cur_a_len = 0;
-                        cur_b_len = 0;
-                        cur_diff = 0;
-                    }
-                    if op == 'I' {
-                        tracepoints.push((len, 0));
-                    } else {
-                        // op == 'D'
-                        tracepoints.push((0, len));
-                    }
-                } else {
-                    // If adding this indel would push the diff over the threshold, flush first.
-                    if cur_diff + len > max_diff {
-                        tracepoints.push((cur_a_len, cur_b_len));
-                        cur_a_len = 0;
-                        cur_b_len = 0;
-                        cur_diff = 0;
-                    }
-                    // Then accumulate the entire indel.
-                    if op == 'I' {
-                        cur_a_len += len;
-                    } else {
-                        // op == 'D'
-                        cur_b_len += len;
-                    }
-                    cur_diff += len;
-                }
-            }
-            '=' | 'M' => {
-                // For match-type ops, simply accumulate since they don't add to diff.
-                cur_a_len += len;
-                cur_b_len += len;
-            }
-            _ => {
-                // Fallback: error
-                panic!("Invalid CIGAR operation: {}", op);
-            }
-        }
-    }
-    // Flush any remaining segment.
-    if cur_a_len > 0 || cur_b_len > 0 {
-        tracepoints.push((cur_a_len, cur_b_len));
-    }
-    tracepoints
-}
-
-/// Convert a CIGAR string into mixed representation tracepoints.
-///
-/// Similar to cigar_to_tracepoints but preserves special operations (H, N, P, S)
-/// that should not be processed by WFA alignment.
-///
-/// @param cigar: The CIGAR string to process
-/// @param max_diff: Maximum number of differences allowed in each segment
-/// @return Vector of mixed representation elements
-pub fn cigar_to_mixed_tracepoints(cigar: &str, max_diff: usize) -> Vec<MixedRepresentation> {
-    let ops = cigar_str_to_cigar_ops(cigar);
-    let mut mixed_tracepoints = Vec::new();
-
-    let mut cur_a_len = 0;
-    let mut cur_b_len = 0;
-    let mut cur_diff = 0;
-
-    for (mut len, op) in ops {
-        match op {
-            // Special operators that are preserved as-is
-            'H' | 'N' | 'P' | 'S' => {
-                if cur_a_len > 0 || cur_b_len > 0 {
-                    mixed_tracepoints.push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
-                    cur_a_len = 0;
-                    cur_b_len = 0;
-                    cur_diff = 0;
-                }
-
-                // Add the special operation
-                mixed_tracepoints.push(MixedRepresentation::CigarOp(len, op));
-            }
-            'X' => {
-                // X is splittable
-                while len > 0 {
-                    let remaining = max_diff.saturating_sub(cur_diff);
-                    let step = min(len, remaining);
-
-                    // Handle the case when max_diff = 0 or no room left in current segment
-                    if step == 0 {
-                        // Flush current segment if it exists
-                        if cur_a_len > 0 || cur_b_len > 0 {
-                            mixed_tracepoints.push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
-                            cur_a_len = 0;
-                            cur_b_len = 0;
-                            cur_diff = 0;
-                        }
-
-                        // Create a segment with just 1 mismatch
-                        if max_diff == 0 {
-                            mixed_tracepoints.push(MixedRepresentation::Tracepoint(1, 1));
-                            len -= 1;
-                        } else {
-                            // This case shouldn't happen, but handle it gracefully
-                            cur_a_len = 1;
-                            cur_b_len = 1;
-                            cur_diff = 1;
-                            len -= 1;
-                        }
-                    } else {
-                        cur_a_len += step;
-                        cur_b_len += step;
-                        cur_diff += step;
-                        len -= step;
-
-                        if cur_diff == max_diff {
-                            mixed_tracepoints.push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
-                            cur_a_len = 0;
-                            cur_b_len = 0;
-                            cur_diff = 0;
-                        }
-                    }
-                }
-            }
-            'I' | 'D' => {
-                // For indels, which are unsplittable, try to incorporate into the current tracepoint.
-                if len > max_diff {
-                    // If the indel is too long, flush any pending segment first.
-                    if cur_a_len > 0 || cur_b_len > 0 {
-                        mixed_tracepoints.push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
-                        cur_a_len = 0;
-                        cur_b_len = 0;
-                        cur_diff = 0;
-                    }
-                    if op == 'I' {
-                        mixed_tracepoints.push(MixedRepresentation::Tracepoint(len, 0));
-                    } else {
-                        // op == 'D'
-                        mixed_tracepoints.push(MixedRepresentation::Tracepoint(0, len));
-                    }
-                } else {
-                    // If adding this indel would push the diff over the threshold, flush first.
-                    if cur_diff + len > max_diff {
-                        mixed_tracepoints.push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
-                        cur_a_len = 0;
-                        cur_b_len = 0;
-                        cur_diff = 0;
-                    }
-                    // Then accumulate the entire indel.
-                    if op == 'I' {
-                        cur_a_len += len;
-                    } else {
-                        // op == 'D'
-                        cur_b_len += len;
-                    }
-                    cur_diff += len;
-                }
-            }
-            '=' | 'M' => {
-                // For match-type ops, simply accumulate since they don't add to diff.
-                cur_a_len += len;
-                cur_b_len += len;
-            }
-            _ => {
-                // Fallback: error
-                panic!("Invalid CIGAR operation: {}", op);
-            }
-        }
-    }
-    // Flush any remaining segment.
-    if cur_a_len > 0 || cur_b_len > 0 {
-        mixed_tracepoints.push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
-    }
-    mixed_tracepoints
-}
-
-
-
-/// Reconstruct a CIGAR string from variable tracepoints.
-///
-/// Converts variable tracepoints back to regular tracepoints and then reconstructs CIGAR.
-/// The variable format (length, Option<b_length>) is expanded to (a_len, b_len):
-/// - (len, None) becomes (len, len)
-/// - (a_len, Some(b_len)) becomes (a_len, b_len)
-///
-/// @param variable_tracepoints: Vector of (a_len, Option<b_len>) pairs
-/// @param a_seq: Reference sequence
-/// @param b_seq: Query sequence
-/// @param a_start: Starting position in reference sequence
-/// @param b_start: Starting position in query sequence
-/// @param mismatch: Penalty for mismatches
-/// @param gap_open1: Penalty for opening a gap (first gap type)
-/// @param gap_ext1: Penalty for extending a gap (first gap type)
-/// @param gap_open2: Penalty for opening a gap (second gap type)
-/// @param gap_ext2: Penalty for extending a gap (second gap type)
-/// @return Reconstructed CIGAR string
-pub fn variable_tracepoints_to_cigar(
-    variable_tracepoints: &[(usize, Option<usize>)],
+/// Reconstruct CIGAR string from tracepoint segments using WFA alignment
+/// 
+/// penalties: (mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2)
+fn reconstruct_cigar_from_segments(
+    segments: &[(usize, usize)],
     a_seq: &[u8],
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    mismatch: i32,
-    gap_open1: i32,
-    gap_ext1: i32,
-    gap_open2: i32,
-    gap_ext2: i32,
+    penalties: (i32, i32, i32, i32, i32),
 ) -> String {
-    // Convert variable tracepoints back to regular tracepoints
-    let regular_tracepoints: Vec<(usize, usize)> = variable_tracepoints
-        .iter()
-        .map(|(a_len, b_len_opt)| {
-            match b_len_opt {
-                None => (*a_len, *a_len),
-                Some(b_len) => (*a_len, *b_len),
-            }
-        })
-        .collect();
-    
-    // Use existing tracepoints_to_cigar function
-    tracepoints_to_cigar(
-        &regular_tracepoints,
-        a_seq,
-        b_seq,
-        a_start,
-        b_start,
-        mismatch,
-        gap_open1,
-        gap_ext1,
-        gap_open2,
-        gap_ext2,
-    )
-}
-
-/// Reconstruct a CIGAR string from tracepoints.
-///
-/// For each tracepoint pair, performs detailed alignment using WFA alignment.
-/// Special cases are handled efficiently:
-/// - Pure insertions (a_len > 0, b_len = 0) become 'I' operations
-/// - Pure deletions (a_len = 0, b_len > 0) become 'D' operations
-/// - Mixed segments are realigned using the WFA algorithm
-///
-/// @param tracepoints: Vector of (a_len, b_len) pairs defining segment boundaries
-/// @param a_seq: Reference sequence
-/// @param b_seq: Query sequence
-/// @param a_start: Starting position in reference sequence
-/// @param b_start: Starting position in query sequence
-/// @param mismatch: Penalty for mismatches
-/// @param gap_open1: Penalty for opening a gap (first gap type)
-/// @param gap_ext1: Penalty for extending a gap (first gap type)
-/// @param gap_open2: Penalty for opening a gap (second gap type)
-/// @param gap_ext2: Penalty for extending a gap (second gap type)
-/// @return Reconstructed CIGAR string
-pub fn tracepoints_to_cigar(
-    tracepoints: &[(usize, usize)],
-    a_seq: &[u8],
-    b_seq: &[u8],
-    a_start: usize,
-    b_start: usize,
-    mismatch: i32,
-    gap_open1: i32,
-    gap_ext1: i32,
-    gap_open2: i32,
-    gap_ext2: i32,
-) -> String {
-    // Create aligner and configure settings
+    let (mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2) = penalties;
     let mut aligner = AffineWavefronts::with_penalties_affine2p(
         0, mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2,
     );
@@ -372,17 +210,17 @@ pub fn tracepoints_to_cigar(
     let mut current_a = a_start;
     let mut current_b = b_start;
 
-    for &(a_len, b_len) in tracepoints {
-        // Special case: long indel.
+    for &(a_len, b_len) in segments {
         if a_len > 0 && b_len == 0 {
-            // This is an insertion.
+            // Pure insertion
             cigar_ops.push((a_len, 'I'));
             current_a += a_len;
         } else if b_len > 0 && a_len == 0 {
-            // This is a deletion.
+            // Pure deletion
             cigar_ops.push((b_len, 'D'));
             current_b += b_len;
         } else {
+            // Mixed segment - realign with WFA
             let a_end = current_a + a_len;
             let b_end = current_b + b_len;
             let seg_ops = align_sequences_wfa(
@@ -399,35 +237,33 @@ pub fn tracepoints_to_cigar(
     cigar_ops_to_cigar_string(&cigar_ops)
 }
 
-/// Reconstruct a CIGAR string from mixed representation.
-///
-/// Processes both regular alignment segments (Tracepoint) and special operations (CigarOp)
-/// to reconstruct a complete CIGAR string with all operations preserved.
-///
-/// @param mixed_tracepoints: Vector of MixedRepresentation items
-/// @param a_seq: Reference sequence
-/// @param b_seq: Query sequence
-/// @param a_start: Starting position in reference sequence
-/// @param b_start: Starting position in query sequence
-/// @param mismatch: Penalty for mismatches
-/// @param gap_open1: Penalty for opening a gap (first gap type)
-/// @param gap_ext1: Penalty for extending a gap (first gap type)
-/// @param gap_open2: Penalty for opening a gap (second gap type)
-/// @param gap_ext2: Penalty for extending a gap (second gap type)
-/// @return Reconstructed CIGAR string
+/// Reconstruct CIGAR string from basic tracepoints
+/// 
+/// penalties: (mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2)
+pub fn tracepoints_to_cigar(
+    tracepoints: &[(usize, usize)],
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    b_start: usize,
+    penalties: (i32, i32, i32, i32, i32),
+) -> String {
+    reconstruct_cigar_from_segments(tracepoints, a_seq, b_seq, a_start, b_start, penalties)
+}
+
+/// Reconstruct CIGAR string from mixed representation tracepoints
+/// 
+/// Processes both alignment segments and preserved special operations.
+/// penalties: (mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2)
 pub fn mixed_tracepoints_to_cigar(
     mixed_tracepoints: &[MixedRepresentation],
     a_seq: &[u8],
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    mismatch: i32,
-    gap_open1: i32,
-    gap_ext1: i32,
-    gap_open2: i32,
-    gap_ext2: i32,
+    penalties: (i32, i32, i32, i32, i32),
 ) -> String {
-    // Create aligner and configure settings
+    let (mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2) = penalties;
     let mut aligner = AffineWavefronts::with_penalties_affine2p(
         0, mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2,
     );
@@ -438,19 +274,16 @@ pub fn mixed_tracepoints_to_cigar(
 
     for item in mixed_tracepoints {
         match item {
-            // For special CIGAR operations, simply add them directly
             MixedRepresentation::CigarOp(len, op) => {
+                // Add special operations directly
                 cigar_ops.push((*len, *op));
             }
-            // For tracepoint segments, realign using WFA
             MixedRepresentation::Tracepoint(a_len, b_len) => {
-                // Special case: long indel.
+                // Process alignment segments
                 if *a_len > 0 && *b_len == 0 {
-                    // This is an insertion.
                     cigar_ops.push((*a_len, 'I'));
                     current_a += a_len;
                 } else if *b_len > 0 && *a_len == 0 {
-                    // This is a deletion.
                     cigar_ops.push((*b_len, 'D'));
                     current_b += b_len;
                 } else {
@@ -472,11 +305,33 @@ pub fn mixed_tracepoints_to_cigar(
     cigar_ops_to_cigar_string(&cigar_ops)
 }
 
+/// Reconstruct CIGAR string from variable tracepoints
+/// 
+/// Converts variable format back to regular tracepoints, then reconstructs CIGAR.
+/// penalties: (mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2)
+pub fn variable_tracepoints_to_cigar(
+    variable_tracepoints: &[(usize, Option<usize>)],
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    b_start: usize,
+    penalties: (i32, i32, i32, i32, i32),
+) -> String {
+    // Convert variable format: (len, None) -> (len, len), (a_len, Some(b_len)) -> (a_len, b_len)
+    let regular_tracepoints: Vec<(usize, usize)> = variable_tracepoints
+        .iter()
+        .map(|(a_len, b_len_opt)| match b_len_opt {
+            None => (*a_len, *a_len),
+            Some(b_len) => (*a_len, *b_len),
+        })
+        .collect();
+    
+    reconstruct_cigar_from_segments(&regular_tracepoints, a_seq, b_seq, a_start, b_start, penalties)
+}
+
 // Helper functions
 
-/// Merge in-place consecutive CIGAR operations of the same type.
-///
-/// @param ops: Vector of (length, operation) pairs
+/// Merge consecutive CIGAR operations of the same type in-place
 fn merge_cigar_ops(ops: &mut Vec<(usize, char)>) {
     if ops.len() <= 1 {
         return;
@@ -501,10 +356,7 @@ fn merge_cigar_ops(ops: &mut Vec<(usize, char)>) {
     ops.truncate(write_idx + 1);
 }
 
-/// Parse a CIGAR string into a vector of (length, operation) pairs.
-///
-/// @param cigar: CIGAR string (e.g., "10M2D5M")
-/// @return Vector of (length, operation) pairs
+/// Parse CIGAR string into (length, operation) pairs
 fn cigar_str_to_cigar_ops(cigar: &str) -> Vec<(usize, char)> {
     let mut ops = Vec::new();
     let mut num = String::new();
@@ -521,11 +373,8 @@ fn cigar_str_to_cigar_ops(cigar: &str) -> Vec<(usize, char)> {
     ops
 }
 
-/// Convert a byte array of CIGAR operations into a vector of (length, operation) pairs.
-/// Handles the special case of 'M' (77 in ASCII) being treated as '='.
-///
-/// @param ops: Byte array of CIGAR operations
-/// @return Vector of (length, operation) pairs
+/// Convert WFA byte array to (length, operation) pairs
+/// Treats 'M' (77) as '=' for consistency
 fn cigar_u8_to_cigar_ops(ops: &[u8]) -> Vec<(usize, char)> {
     let mut result = Vec::new();
     let mut count = 1;
@@ -542,16 +391,11 @@ fn cigar_u8_to_cigar_ops(ops: &[u8]) -> Vec<(usize, char)> {
         }
     }
 
-    // Push the final operation
     result.push((count, current_op));
-
     result
 }
 
-/// Format a vector of CIGAR operations as a standard CIGAR string.
-///
-/// @param ops: Vector of (length, operation) pairs
-/// @return Formatted CIGAR string (e.g., "10M2D5M")
+/// Format CIGAR operations as standard CIGAR string
 pub fn cigar_ops_to_cigar_string(ops: &[(usize, char)]) -> String {
     ops.iter()
         .map(|(len, op)| format!("{}{}", len, op))
@@ -559,25 +403,19 @@ pub fn cigar_ops_to_cigar_string(ops: &[(usize, char)]) -> String {
         .join("")
 }
 
-/// Align two sequence segments using WFA algorithm.
-///
-/// @param a: Reference sequence segment
-/// @param b: Query sequence segment
-/// @param aligner: Configured WFA aligner
-/// @return Vector of CIGAR operations for the alignment
+/// Align two sequence segments using WFA algorithm
+/// 
+/// Note: aligns b vs a to get correct I/D orientation in CIGAR
 pub fn align_sequences_wfa(
     a: &[u8],
     b: &[u8],
     aligner: &mut AffineWavefronts,
 ) -> Vec<(usize, char)> {
-    // Do the alignment b vs a (it is not a typo) to have insertions/deletions in the query as Is/Ds in the CIGAR string
     let status = aligner.align(b, a);
 
     match status {
         AlignmentStatus::Completed => cigar_u8_to_cigar_ops(aligner.cigar()),
-        s => {
-            panic!("Alignment failed with status: {:?}", s);
-        }
+        s => panic!("Alignment failed with status: {:?}", s),
     }
 }
 
@@ -630,12 +468,8 @@ mod tests {
             a_seq,
             b_seq,
             0,
-            0, // sequences and start positions
-            2,
-            4,
-            2,
-            6,
-            1, // alignment penalties
+            0,
+            (2, 4, 2, 6, 1),
         );
         assert_eq!(
             reconstructed_cigar, original_cigar,
@@ -773,11 +607,7 @@ mod tests {
                 b_seq,
                 0,
                 0,
-                mismatch,
-                gap_open1,
-                gap_ext1,
-                gap_open2,
-                gap_ext2,
+                (mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2),
             );
 
             assert_eq!(
@@ -807,7 +637,7 @@ mod tests {
             b_seq,
             0,
             0,
-            2, 4, 2, 6, 1,
+            (2, 4, 2, 6, 1),
         );
 
         // Since sequences are identical, we expect matches for the tracepoint segments
@@ -895,12 +725,8 @@ mod tests {
             a_seq,
             b_seq,
             0,
-            0, // sequences and start positions
-            2,
-            4,
-            2,
-            6,
-            1, // alignment penalties
+            0,
+            (2, 4, 2, 6, 1),
         );
         assert_eq!(
             reconstructed_cigar, original_cigar,

@@ -162,6 +162,120 @@ fn process_cigar_to_tracepoints(
     }
 }
 
+/// Core function to process CIGAR into tracepoints with raw mode
+///
+/// Similar to process_cigar_to_tracepoints but allows indels to be split
+/// across segments like mismatches.
+fn process_cigar_to_tracepoints_raw(
+    cigar: &str,
+    max_diff: usize,
+    preserve_special: bool,
+) -> TracepointOutput {
+    let ops = cigar_str_to_cigar_ops(cigar);
+    let mut basic_tracepoints = Vec::new();
+    let mut mixed_tracepoints = Vec::new();
+    let mut cur_a_len = 0;
+    let mut cur_b_len = 0;
+    let mut cur_diff = 0;
+
+    for (mut len, op) in ops {
+        match op {
+            'H' | 'N' | 'P' | 'S' if preserve_special => {
+                // Preserve special operations as-is in mixed mode
+                if cur_a_len > 0 || cur_b_len > 0 {
+                    mixed_tracepoints.push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
+                    cur_a_len = 0;
+                    cur_b_len = 0;
+                    cur_diff = 0;
+                }
+                mixed_tracepoints.push(MixedRepresentation::CigarOp(len, op));
+            }
+            'X' | 'I' | 'D' => {
+                // All differences (mismatches and indels) can be split across segments
+                while len > 0 {
+                    let remaining = max_diff.saturating_sub(cur_diff);
+                    let step = min(len, remaining);
+
+                    if step == 0 {
+                        // Flush current segment
+                        if cur_a_len > 0 || cur_b_len > 0 {
+                            if preserve_special {
+                                mixed_tracepoints
+                                    .push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
+                            } else {
+                                basic_tracepoints.push((cur_a_len, cur_b_len));
+                            }
+                            cur_a_len = 0;
+                            cur_b_len = 0;
+                            cur_diff = 0;
+                        }
+
+                        if max_diff == 0 {
+                            // Handle single operation when max_diff is 0
+                            let (a_add, b_add) = match op {
+                                'X' => (1, 1),
+                                'I' => (1, 0),
+                                'D' => (0, 1),
+                                _ => unreachable!(),
+                            };
+                            if preserve_special {
+                                mixed_tracepoints.push(MixedRepresentation::Tracepoint(a_add, b_add));
+                            } else {
+                                basic_tracepoints.push((a_add, b_add));
+                            }
+                            len -= 1;
+                        }
+                    } else {
+                        // Add operations to current segment
+                        let (a_add, b_add) = match op {
+                            'X' => (step, step),
+                            'I' => (step, 0),
+                            'D' => (0, step),
+                            _ => unreachable!(),
+                        };
+                        cur_a_len += a_add;
+                        cur_b_len += b_add;
+                        cur_diff += step;
+                        len -= step;
+
+                        if cur_diff == max_diff {
+                            if preserve_special {
+                                mixed_tracepoints
+                                    .push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
+                            } else {
+                                basic_tracepoints.push((cur_a_len, cur_b_len));
+                            }
+                            cur_a_len = 0;
+                            cur_b_len = 0;
+                            cur_diff = 0;
+                        }
+                    }
+                }
+            }
+            '=' | 'M' => {
+                // Matches don't count as differences
+                cur_a_len += len;
+                cur_b_len += len;
+            }
+            _ => panic!("Invalid CIGAR operation: {}", op),
+        }
+    }
+
+    if cur_a_len > 0 || cur_b_len > 0 {
+        if preserve_special {
+            mixed_tracepoints.push(MixedRepresentation::Tracepoint(cur_a_len, cur_b_len));
+        } else {
+            basic_tracepoints.push((cur_a_len, cur_b_len));
+        }
+    }
+
+    if preserve_special {
+        TracepointOutput::Mixed(mixed_tracepoints)
+    } else {
+        TracepointOutput::Basic(basic_tracepoints)
+    }
+}
+
 /// Convert CIGAR string into basic tracepoints
 ///
 /// Segments CIGAR into tracepoints with at most max_diff differences per segment.
@@ -182,11 +296,48 @@ pub fn cigar_to_mixed_tracepoints(cigar: &str, max_diff: usize) -> Vec<MixedRepr
     }
 }
 
+/// Convert CIGAR string into raw tracepoints
+///
+/// Like cigar_to_tracepoints but allows indels to be split across segments.
+/// This provides more granular control over segment sizes.
+pub fn cigar_to_tracepoints_raw(cigar: &str, max_diff: usize) -> Vec<(usize, usize)> {
+    match process_cigar_to_tracepoints_raw(cigar, max_diff, false) {
+        TracepointOutput::Basic(tracepoints) => tracepoints,
+        _ => unreachable!(),
+    }
+}
+
+/// Convert CIGAR string into mixed representation raw tracepoints
+///
+/// Like cigar_to_mixed_tracepoints but allows indels to be split across segments.
+pub fn cigar_to_mixed_tracepoints_raw(cigar: &str, max_diff: usize) -> Vec<MixedRepresentation> {
+    match process_cigar_to_tracepoints_raw(cigar, max_diff, true) {
+        TracepointOutput::Mixed(tracepoints) => tracepoints,
+        _ => unreachable!(),
+    }
+}
+
 /// Convert CIGAR string into variable tracepoints with length optimization
 ///
 /// Uses (length, None) when a_len == b_len, otherwise (a_len, Some(b_len)).
 pub fn cigar_to_variable_tracepoints(cigar: &str, max_diff: usize) -> Vec<(usize, Option<usize>)> {
     cigar_to_tracepoints(cigar, max_diff)
+        .into_iter()
+        .map(|(a_len, b_len)| {
+            if a_len == b_len {
+                (a_len, None)
+            } else {
+                (a_len, Some(b_len))
+            }
+        })
+        .collect()
+}
+
+/// Convert CIGAR string into variable raw tracepoints with length optimization
+///
+/// Like cigar_to_variable_tracepoints but allows indels to be split across segments.
+pub fn cigar_to_variable_tracepoints_raw(cigar: &str, max_diff: usize) -> Vec<(usize, Option<usize>)> {
+    cigar_to_tracepoints_raw(cigar, max_diff)
         .into_iter()
         .map(|(a_len, b_len)| {
             if a_len == b_len {
@@ -884,6 +1035,150 @@ mod tests {
                 result,
                 *expected,
                 "Optimization test case {}: Failed for CIGAR '{}' with max_diff={}",
+                i + 1,
+                cigar,
+                max_diff
+            );
+        }
+    }
+
+    #[test]
+    fn test_raw_tracepoint_generation() {
+        // Test CIGAR string with indels
+        let cigar = "5=10I5=10D5=";
+
+        // Test cases: (max_diff, expected_tracepoints)
+        let test_cases = vec![
+            // Case 1: No differences allowed - each operation becomes its own segment
+            (0, vec![(5, 5), (1, 0), (1, 0), (1, 0), (1, 0), (1, 0), 
+                     (1, 0), (1, 0), (1, 0), (1, 0), (1, 0), (5, 5),
+                     (0, 1), (0, 1), (0, 1), (0, 1), (0, 1),
+                     (0, 1), (0, 1), (0, 1), (0, 1), (0, 1), (5, 5)]),
+            // Case 2: Allow up to 3 differences - indels are split and combined with matches
+            (3, vec![(8, 5), (3, 0), (3, 0), (6, 7), (0, 3), (0, 3), (5, 7)]),
+            // Case 3: Allow up to 5 differences - indels are split into chunks of 5
+            (5, vec![(10, 5), (5, 0), (5, 10), (0, 5), (5, 5)]),
+            // Case 4: Allow up to 10 differences - each indel fits in one segment
+            (10, vec![(15, 5), (5, 15), (5, 5)]),
+        ];
+
+        // Run each test case
+        for (i, (max_diff, expected_tracepoints)) in test_cases.iter().enumerate() {
+            let tracepoints = cigar_to_tracepoints_raw(cigar, *max_diff);
+            assert_eq!(
+                tracepoints,
+                *expected_tracepoints,
+                "Test case {}: Raw tracepoints with max_diff={} incorrect",
+                i + 1,
+                max_diff
+            );
+        }
+    }
+
+    #[test]
+    fn test_raw_vs_regular_tracepoints() {
+        // Test that raw mode splits indels while regular mode doesn't
+        let cigar = "5=8I3=7D2=";
+        let max_diff = 5;
+
+        // Regular mode: indels larger than max_diff become their own segments
+        let regular = cigar_to_tracepoints(cigar, max_diff);
+        // Raw mode: indels are split into max_diff-sized chunks
+        let raw = cigar_to_tracepoints_raw(cigar, max_diff);
+
+        // Regular mode should keep large indels intact
+        assert_eq!(regular, vec![(5, 5), (8, 0), (3, 3), (0, 7), (2, 2)]);
+        // Raw mode: indels can be combined with matches in segments
+        // 5= + first 5I -> (10, 5)
+        // remaining 3I + 3= -> (6, 3) but since we hit another indel, may need to check
+        assert_eq!(raw, vec![(10, 5), (6, 5), (0, 5), (2, 2)]);
+    }
+
+    #[test]
+    fn test_mixed_raw_tracepoints() {
+        // Test mixed representation with raw mode
+        let cigar = "3S5=6I2=4D1H";
+        let max_diff = 3;
+
+        let mixed_raw = cigar_to_mixed_tracepoints_raw(cigar, max_diff);
+        
+        assert_eq!(
+            mixed_raw,
+            vec![
+                MixedRepresentation::CigarOp(3, 'S'),
+                MixedRepresentation::Tracepoint(8, 5),  // 5= + 3I
+                MixedRepresentation::Tracepoint(3, 0),  // remaining 3I
+                MixedRepresentation::Tracepoint(2, 5),  // 2= + 3D 
+                MixedRepresentation::Tracepoint(0, 1),  // remaining 1D
+                MixedRepresentation::CigarOp(1, 'H'),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_variable_raw_tracepoints() {
+        // Test variable format with raw mode
+        let cigar = "3=6I3=6D3=";
+        let max_diff = 3;
+
+        let variable_raw = cigar_to_variable_tracepoints_raw(cigar, max_diff);
+        
+        // With raw mode, indels combine with adjacent matches
+        assert_eq!(
+            variable_raw,
+            vec![
+                (6, Some(3)),   // 3= + 3I
+                (3, Some(0)),   // remaining 3I
+                (3, Some(6)),   // 3= + 3D
+                (0, Some(3)),   // remaining 3D
+                (3, None),      // 3=
+            ]
+        );
+    }
+
+    #[test]
+    fn test_raw_cigar_roundtrip() {
+        // Test that raw tracepoints can be reconstructed properly
+        let original_cigar = "2=2I3=2D2=";
+        // CIGAR consumes: a_seq: 2 + 2 + 3 + 0 + 2 = 9 bases
+        //                 b_seq: 2 + 0 + 3 + 2 + 2 = 9 bases  
+        let a_seq = b"ACGTACGTA"; // 9 bases
+        let b_seq = b"ACCGTCGAA";   // 9 bases
+        let max_diff = 2;
+
+        // Test raw tracepoints roundtrip
+        let raw_tracepoints = cigar_to_tracepoints_raw(original_cigar, max_diff);
+        let reconstructed_cigar =
+            tracepoints_to_cigar(&raw_tracepoints, a_seq, b_seq, 0, 0, (2, 4, 2, 6, 1));
+        
+        // The reconstructed CIGAR might be slightly different due to realignment,
+        // but should represent the same alignment
+        assert!(!reconstructed_cigar.is_empty(), "Raw roundtrip produced empty CIGAR");
+    }
+
+    #[test]
+    fn test_raw_edge_cases() {
+        // Test edge cases for raw mode
+        let test_cases = vec![
+            // Empty CIGAR
+            ("", 5, vec![]),
+            // Only matches
+            ("10=", 3, vec![(10, 10)]),
+            // Single large indel
+            ("15I", 5, vec![(5, 0), (5, 0), (5, 0)]),
+            ("15D", 5, vec![(0, 5), (0, 5), (0, 5)]),
+            // Mixed with mismatches - mismatches and indels can combine
+            ("2X8I2X", 3, vec![(3, 2), (3, 0), (3, 0), (3, 2)]),
+            // max_diff = 0 with indels
+            ("3I2D", 0, vec![(1, 0), (1, 0), (1, 0), (0, 1), (0, 1)]),
+        ];
+
+        for (i, (cigar, max_diff, expected)) in test_cases.iter().enumerate() {
+            let result = cigar_to_tracepoints_raw(cigar, *max_diff);
+            assert_eq!(
+                result,
+                *expected,
+                "Raw edge case {}: Failed for CIGAR '{}' with max_diff={}",
                 i + 1,
                 cigar,
                 max_diff

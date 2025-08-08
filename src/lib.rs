@@ -100,13 +100,14 @@ fn process_cigar_unified(
                             &mut mixed_tracepoints,
                         );
 
+                        let (a_add, b_add) = match op {
+                            'X' => (1, 1),
+                            'I' => (1, 0),
+                            'D' => (0, 1),
+                            _ => unreachable!(),
+                        };
+                        
                         if max_diff == 0 {
-                            let (a_add, b_add) = match op {
-                                'X' => (1, 1),
-                                'I' => (1, 0),
-                                'D' => (0, 1),
-                                _ => unreachable!(),
-                            };
                             add_tracepoint(
                                 a_add,
                                 b_add,
@@ -114,19 +115,12 @@ fn process_cigar_unified(
                                 &mut basic_tracepoints,
                                 &mut mixed_tracepoints,
                             );
-                            len -= 1;
                         } else {
-                            let (a_add, b_add) = match op {
-                                'X' => (1, 1),
-                                'I' => (1, 0),
-                                'D' => (0, 1),
-                                _ => unreachable!(),
-                            };
                             cur_a_len = a_add;
                             cur_b_len = b_add;
                             cur_diff = 1;
-                            len -= 1;
                         }
+                        len -= 1;
                     } else {
                         let (a_add, b_add) = match op {
                             'X' => (step, step),

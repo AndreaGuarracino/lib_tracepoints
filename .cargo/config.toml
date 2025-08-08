@@ -1,0 +1,11 @@
+[build]
+
+
+[target.aarch64-apple-darwin]
+rustflags = [
+  "-C", "link-arg=-L/opt/local/lib/libomp",
+  "-C", "link-arg=-lomp",
+  "-C", "link-arg=-isysroot",
+  "-C", "link-arg=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"
+]
+linker = "/opt/local/libexec/llvm-17/bin/clang"

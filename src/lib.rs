@@ -818,7 +818,7 @@ mod tests {
         let cigar = "10=2D5=2I3=";
 
         // Define test cases: (max_diff, expected_tracepoints)
-        let test_cases = vec![
+        let test_cases = [
             // Case 1: No differences allowed - each operation becomes its own segment
             (0, vec![(10, 10), (0, 2), (5, 5), (2, 0), (3, 3)]),
             // Case 2: Allow up to 2 differences in each segment
@@ -953,7 +953,7 @@ mod tests {
         let gap_ext2 = 1;
 
         // Test cases with expected results - simplified to work with identical sequences
-        let test_cases = vec![
+        let test_cases = [
             // Case 1: Simple special operations with matches
             (
                 vec![
@@ -1025,7 +1025,7 @@ mod tests {
     #[test]
     fn test_mixed_tracepoints_edge_cases() {
         // Test edge cases
-        let test_cases = vec![
+        let test_cases = [
             // Empty CIGAR
             ("", 5, vec![]),
             // Only special operations
@@ -1070,7 +1070,7 @@ mod tests {
         let cigar = "10=2D5=2I3=";
 
         // Define test cases: (max_diff, expected_variable_tracepoints)
-        let test_cases = vec![
+        let test_cases = [
             // Case 1: No differences allowed - each operation becomes its own segment
             (
                 0,
@@ -1222,7 +1222,7 @@ mod tests {
         let cigar = "5=10I5=10D5=";
 
         // Test cases: (max_diff, expected_tracepoints)
-        let test_cases = vec![
+        let test_cases = [
             // Case 1: No differences allowed - each operation becomes its own segment
             (
                 0,
@@ -1454,7 +1454,7 @@ mod tests {
         let cigar = "5=3I2=2D4=";
 
         // Define test cases: (max_diff, expected_tracepoints) - updated based on actual diagonal logic
-        let test_cases = vec![
+        let test_cases = [
             // Case 1: No diagonal distance allowed - each indel creates new segment
             (0, vec![(5, 5), (3, 0), (2, 2), (0, 2), (4, 4)]),
             // Case 2: Allow diagonal distance up to 2 - 3I exceeds max, then 2D+2=+4= fits in next segment
@@ -1494,9 +1494,9 @@ mod tests {
             let regular_tracepoints = cigar_to_tracepoints(cigar, max_diff);
             let diagonal_tracepoints = cigar_to_tracepoints_diagonal(cigar, max_diff);
 
-            println!("CIGAR: {}, max_diff: {}", cigar, max_diff);
-            println!("Regular: {:?}", regular_tracepoints);
-            println!("Diagonal: {:?}", diagonal_tracepoints);
+            println!("CIGAR: {cigar}, max_diff: {max_diff}");
+            println!("Regular: {regular_tracepoints:?}");
+            println!("Diagonal: {diagonal_tracepoints:?}");
 
             // Both should preserve total sequence lengths
             let regular_total: (usize, usize) = regular_tracepoints
@@ -1507,8 +1507,7 @@ mod tests {
                 .fold((0, 0), |(a, b), (x, y)| (a + x, b + y));
             assert_eq!(
                 regular_total, diagonal_total,
-                "Total lengths should match for CIGAR: {}",
-                cigar
+                "Total lengths should match for CIGAR: {cigar}"
             );
         }
     }
@@ -1516,7 +1515,7 @@ mod tests {
     #[test]
     fn test_diagonal_mixed_tracepoints() {
         // Test mixed representation with diagonal distance
-        let test_cases = vec![
+        let test_cases = [
             // Special operations with balanced indels - diagonal allows combining
             (
                 "3S5=2I2=2D1H",
@@ -1616,7 +1615,7 @@ mod tests {
     #[test]
     fn test_diagonal_distance_calculation() {
         // Test the core diagonal distance logic with specific patterns
-        let test_cases = vec![
+        let test_cases = [
             // Progressive insertion - distance should accumulate
             ("1I1I1I", 2, vec![(2, 0), (1, 0)]),
             // Alternating I/D - should balance out perfectly

@@ -21,7 +21,7 @@ pub enum MixedRepresentation {
 /// Helper function to flush current segment to tracepoint collections
 fn flush_segment(
     cur_a_len: &mut usize,
-    cur_b_len: &mut usize, 
+    cur_b_len: &mut usize,
     cur_diff: &mut usize,
     preserve_special: bool,
     basic_tracepoints: &mut Vec<(usize, usize)>,
@@ -75,7 +75,14 @@ fn process_cigar_unified(
     for (mut len, op) in ops {
         match op {
             'H' | 'N' | 'P' | 'S' if preserve_special => {
-                flush_segment(&mut cur_a_len, &mut cur_b_len, &mut cur_diff, preserve_special, &mut basic_tracepoints, &mut mixed_tracepoints);
+                flush_segment(
+                    &mut cur_a_len,
+                    &mut cur_b_len,
+                    &mut cur_diff,
+                    preserve_special,
+                    &mut basic_tracepoints,
+                    &mut mixed_tracepoints,
+                );
                 mixed_tracepoints.push(MixedRepresentation::CigarOp(len, op));
             }
             'X' | 'I' | 'D' if op == 'X' || allow_indel_split => {
@@ -84,8 +91,15 @@ fn process_cigar_unified(
                     let step = min(len, remaining);
 
                     if step == 0 {
-                        flush_segment(&mut cur_a_len, &mut cur_b_len, &mut cur_diff, preserve_special, &mut basic_tracepoints, &mut mixed_tracepoints);
-                        
+                        flush_segment(
+                            &mut cur_a_len,
+                            &mut cur_b_len,
+                            &mut cur_diff,
+                            preserve_special,
+                            &mut basic_tracepoints,
+                            &mut mixed_tracepoints,
+                        );
+
                         if max_diff == 0 {
                             let (a_add, b_add) = match op {
                                 'X' => (1, 1),
@@ -93,12 +107,18 @@ fn process_cigar_unified(
                                 'D' => (0, 1),
                                 _ => unreachable!(),
                             };
-                            add_tracepoint(a_add, b_add, preserve_special, &mut basic_tracepoints, &mut mixed_tracepoints);
+                            add_tracepoint(
+                                a_add,
+                                b_add,
+                                preserve_special,
+                                &mut basic_tracepoints,
+                                &mut mixed_tracepoints,
+                            );
                             len -= 1;
                         } else {
                             let (a_add, b_add) = match op {
                                 'X' => (1, 1),
-                                'I' => (1, 0), 
+                                'I' => (1, 0),
                                 'D' => (0, 1),
                                 _ => unreachable!(),
                             };
@@ -120,19 +140,46 @@ fn process_cigar_unified(
                         len -= step;
 
                         if cur_diff == max_diff {
-                            flush_segment(&mut cur_a_len, &mut cur_b_len, &mut cur_diff, preserve_special, &mut basic_tracepoints, &mut mixed_tracepoints);
+                            flush_segment(
+                                &mut cur_a_len,
+                                &mut cur_b_len,
+                                &mut cur_diff,
+                                preserve_special,
+                                &mut basic_tracepoints,
+                                &mut mixed_tracepoints,
+                            );
                         }
                     }
                 }
             }
             'I' | 'D' => {
                 if len > max_diff {
-                    flush_segment(&mut cur_a_len, &mut cur_b_len, &mut cur_diff, preserve_special, &mut basic_tracepoints, &mut mixed_tracepoints);
+                    flush_segment(
+                        &mut cur_a_len,
+                        &mut cur_b_len,
+                        &mut cur_diff,
+                        preserve_special,
+                        &mut basic_tracepoints,
+                        &mut mixed_tracepoints,
+                    );
                     let (a_add, b_add) = if op == 'I' { (len, 0) } else { (0, len) };
-                    add_tracepoint(a_add, b_add, preserve_special, &mut basic_tracepoints, &mut mixed_tracepoints);
+                    add_tracepoint(
+                        a_add,
+                        b_add,
+                        preserve_special,
+                        &mut basic_tracepoints,
+                        &mut mixed_tracepoints,
+                    );
                 } else {
                     if cur_diff + len > max_diff {
-                        flush_segment(&mut cur_a_len, &mut cur_b_len, &mut cur_diff, preserve_special, &mut basic_tracepoints, &mut mixed_tracepoints);
+                        flush_segment(
+                            &mut cur_a_len,
+                            &mut cur_b_len,
+                            &mut cur_diff,
+                            preserve_special,
+                            &mut basic_tracepoints,
+                            &mut mixed_tracepoints,
+                        );
                     }
                     if op == 'I' {
                         cur_a_len += len;
@@ -150,7 +197,14 @@ fn process_cigar_unified(
         }
     }
 
-    flush_segment(&mut cur_a_len, &mut cur_b_len, &mut cur_diff, preserve_special, &mut basic_tracepoints, &mut mixed_tracepoints);
+    flush_segment(
+        &mut cur_a_len,
+        &mut cur_b_len,
+        &mut cur_diff,
+        preserve_special,
+        &mut basic_tracepoints,
+        &mut mixed_tracepoints,
+    );
 
     if preserve_special {
         Tracepoints::Mixed(mixed_tracepoints)
@@ -179,21 +233,41 @@ fn process_cigar_unified_diagonal(
     for (len, op) in ops {
         match op {
             'H' | 'N' | 'P' | 'S' if preserve_special => {
-                flush_segment(&mut cur_a_len, &mut cur_b_len, &mut 0, preserve_special, &mut basic_tracepoints, &mut mixed_tracepoints);
+                flush_segment(
+                    &mut cur_a_len,
+                    &mut cur_b_len,
+                    &mut 0,
+                    preserve_special,
+                    &mut basic_tracepoints,
+                    &mut mixed_tracepoints,
+                );
                 diagonal_distance = 0; // Reset diagonal distance after flushing
                 mixed_tracepoints.push(MixedRepresentation::CigarOp(len, op));
             }
             'I' => {
                 let new_diagonal_distance = diagonal_distance + len as i64;
-                
+
                 if new_diagonal_distance.unsigned_abs() > max_diff as u64 {
                     // Would exceed max_diff, need to flush current segment first
                     if cur_a_len > 0 || cur_b_len > 0 {
-                        flush_segment(&mut cur_a_len, &mut cur_b_len, &mut 0, preserve_special, &mut basic_tracepoints, &mut mixed_tracepoints);
+                        flush_segment(
+                            &mut cur_a_len,
+                            &mut cur_b_len,
+                            &mut 0,
+                            preserve_special,
+                            &mut basic_tracepoints,
+                            &mut mixed_tracepoints,
+                        );
                     }
-                    
+
                     // Add the insertion as its own segment
-                    add_tracepoint(len, 0, preserve_special, &mut basic_tracepoints, &mut mixed_tracepoints);
+                    add_tracepoint(
+                        len,
+                        0,
+                        preserve_special,
+                        &mut basic_tracepoints,
+                        &mut mixed_tracepoints,
+                    );
                     diagonal_distance = 0; // Reset after creating segment
                 } else {
                     // Can add to current segment
@@ -203,15 +277,28 @@ fn process_cigar_unified_diagonal(
             }
             'D' => {
                 let new_diagonal_distance = diagonal_distance - len as i64;
-                
+
                 if new_diagonal_distance.unsigned_abs() > max_diff as u64 {
                     // Would exceed max_diff, need to flush current segment first
                     if cur_a_len > 0 || cur_b_len > 0 {
-                        flush_segment(&mut cur_a_len, &mut cur_b_len, &mut 0, preserve_special, &mut basic_tracepoints, &mut mixed_tracepoints);
+                        flush_segment(
+                            &mut cur_a_len,
+                            &mut cur_b_len,
+                            &mut 0,
+                            preserve_special,
+                            &mut basic_tracepoints,
+                            &mut mixed_tracepoints,
+                        );
                     }
-                    
+
                     // Add the deletion as its own segment
-                    add_tracepoint(0, len, preserve_special, &mut basic_tracepoints, &mut mixed_tracepoints);
+                    add_tracepoint(
+                        0,
+                        len,
+                        preserve_special,
+                        &mut basic_tracepoints,
+                        &mut mixed_tracepoints,
+                    );
                     diagonal_distance = 0; // Reset after creating segment
                 } else {
                     // Can add to current segment
@@ -234,7 +321,14 @@ fn process_cigar_unified_diagonal(
     }
 
     // Flush any remaining segment
-    flush_segment(&mut cur_a_len, &mut cur_b_len, &mut 0, preserve_special, &mut basic_tracepoints, &mut mixed_tracepoints);
+    flush_segment(
+        &mut cur_a_len,
+        &mut cur_b_len,
+        &mut 0,
+        preserve_special,
+        &mut basic_tracepoints,
+        &mut mixed_tracepoints,
+    );
 
     if preserve_special {
         Tracepoints::Mixed(mixed_tracepoints)
@@ -310,7 +404,10 @@ pub fn cigar_to_variable_tracepoints(cigar: &str, max_diff: usize) -> Vec<(usize
 /// Convert CIGAR string into variable raw tracepoints with length optimization
 ///
 /// Like cigar_to_variable_tracepoints but allows indels to be split across segments.
-pub fn cigar_to_variable_tracepoints_raw(cigar: &str, max_diff: usize) -> Vec<(usize, Option<usize>)> {
+pub fn cigar_to_variable_tracepoints_raw(
+    cigar: &str,
+    max_diff: usize,
+) -> Vec<(usize, Option<usize>)> {
     to_variable_format(cigar_to_tracepoints_raw(cigar, max_diff))
 }
 
@@ -328,7 +425,10 @@ pub fn cigar_to_tracepoints_diagonal(cigar: &str, max_diff: usize) -> Vec<(usize
 /// Convert CIGAR string into mixed tracepoints using diagonal distance segmentation
 ///
 /// Like cigar_to_tracepoints_diagonal but preserves special operations (H, N, P, S).
-pub fn cigar_to_mixed_tracepoints_diagonal(cigar: &str, max_diff: usize) -> Vec<MixedRepresentation> {
+pub fn cigar_to_mixed_tracepoints_diagonal(
+    cigar: &str,
+    max_diff: usize,
+) -> Vec<MixedRepresentation> {
     match process_cigar_unified_diagonal(cigar, max_diff, true) {
         Tracepoints::Mixed(tracepoints) => tracepoints,
         _ => unreachable!(),
@@ -338,7 +438,10 @@ pub fn cigar_to_mixed_tracepoints_diagonal(cigar: &str, max_diff: usize) -> Vec<
 /// Convert CIGAR string into variable tracepoints using diagonal distance with length optimization
 ///
 /// Uses diagonal distance segmentation with (length, None) when a_len == b_len.
-pub fn cigar_to_variable_tracepoints_diagonal(cigar: &str, max_diff: usize) -> Vec<(usize, Option<usize>)> {
+pub fn cigar_to_variable_tracepoints_diagonal(
+    cigar: &str,
+    max_diff: usize,
+) -> Vec<(usize, Option<usize>)> {
     to_variable_format(cigar_to_tracepoints_diagonal(cigar, max_diff))
 }
 
@@ -582,7 +685,14 @@ pub fn variable_tracepoints_to_cigar_diagonal(
 ) -> String {
     // Variable diagonal tracepoints can be reconstructed the same way as regular variable tracepoints
     // since they use the same (usize, Option<usize>) format
-    variable_tracepoints_to_cigar(variable_tracepoints, a_seq, b_seq, a_start, b_start, penalties)
+    variable_tracepoints_to_cigar(
+        variable_tracepoints,
+        a_seq,
+        b_seq,
+        a_start,
+        b_start,
+        penalties,
+    )
 }
 
 /// Reconstruct CIGAR string from variable diagonal tracepoints with provided aligner
@@ -598,7 +708,14 @@ pub fn variable_tracepoints_to_cigar_diagonal_with_aligner(
     aligner: &mut AffineWavefronts,
 ) -> String {
     // Variable diagonal tracepoints can be reconstructed the same way as regular variable tracepoints
-    variable_tracepoints_to_cigar_with_aligner(variable_tracepoints, a_seq, b_seq, a_start, b_start, aligner)
+    variable_tracepoints_to_cigar_with_aligner(
+        variable_tracepoints,
+        a_seq,
+        b_seq,
+        a_start,
+        b_start,
+        aligner,
+    )
 }
 
 // Helper functions
@@ -1107,12 +1224,39 @@ mod tests {
         // Test cases: (max_diff, expected_tracepoints)
         let test_cases = vec![
             // Case 1: No differences allowed - each operation becomes its own segment
-            (0, vec![(5, 5), (1, 0), (1, 0), (1, 0), (1, 0), (1, 0), 
-                     (1, 0), (1, 0), (1, 0), (1, 0), (1, 0), (5, 5),
-                     (0, 1), (0, 1), (0, 1), (0, 1), (0, 1),
-                     (0, 1), (0, 1), (0, 1), (0, 1), (0, 1), (5, 5)]),
+            (
+                0,
+                vec![
+                    (5, 5),
+                    (1, 0),
+                    (1, 0),
+                    (1, 0),
+                    (1, 0),
+                    (1, 0),
+                    (1, 0),
+                    (1, 0),
+                    (1, 0),
+                    (1, 0),
+                    (1, 0),
+                    (5, 5),
+                    (0, 1),
+                    (0, 1),
+                    (0, 1),
+                    (0, 1),
+                    (0, 1),
+                    (0, 1),
+                    (0, 1),
+                    (0, 1),
+                    (0, 1),
+                    (0, 1),
+                    (5, 5),
+                ],
+            ),
             // Case 2: Allow up to 3 differences - indels are split and combined with matches
-            (3, vec![(8, 5), (3, 0), (3, 0), (6, 7), (0, 3), (0, 3), (5, 7)]),
+            (
+                3,
+                vec![(8, 5), (3, 0), (3, 0), (6, 7), (0, 3), (0, 3), (5, 7)],
+            ),
             // Case 3: Allow up to 5 differences - indels are split into chunks of 5
             (5, vec![(10, 5), (5, 0), (5, 10), (0, 5), (5, 5)]),
             // Case 4: Allow up to 10 differences - each indel fits in one segment
@@ -1158,15 +1302,15 @@ mod tests {
         let max_diff = 3;
 
         let mixed_raw = cigar_to_mixed_tracepoints_raw(cigar, max_diff);
-        
+
         assert_eq!(
             mixed_raw,
             vec![
                 MixedRepresentation::CigarOp(3, 'S'),
-                MixedRepresentation::Tracepoint(8, 5),  // 5= + 3I
-                MixedRepresentation::Tracepoint(3, 0),  // remaining 3I
-                MixedRepresentation::Tracepoint(2, 5),  // 2= + 3D 
-                MixedRepresentation::Tracepoint(0, 1),  // remaining 1D
+                MixedRepresentation::Tracepoint(8, 5), // 5= + 3I
+                MixedRepresentation::Tracepoint(3, 0), // remaining 3I
+                MixedRepresentation::Tracepoint(2, 5), // 2= + 3D
+                MixedRepresentation::Tracepoint(0, 1), // remaining 1D
                 MixedRepresentation::CigarOp(1, 'H'),
             ]
         );
@@ -1179,16 +1323,16 @@ mod tests {
         let max_diff = 3;
 
         let variable_raw = cigar_to_variable_tracepoints_raw(cigar, max_diff);
-        
+
         // With raw mode, indels combine with adjacent matches
         assert_eq!(
             variable_raw,
             vec![
-                (6, Some(3)),   // 3= + 3I
-                (3, Some(0)),   // remaining 3I
-                (3, Some(6)),   // 3= + 3D
-                (0, Some(3)),   // remaining 3D
-                (3, None),      // 3=
+                (6, Some(3)), // 3= + 3I
+                (3, Some(0)), // remaining 3I
+                (3, Some(6)), // 3= + 3D
+                (0, Some(3)), // remaining 3D
+                (3, None),    // 3=
             ]
         );
     }
@@ -1198,19 +1342,22 @@ mod tests {
         // Test that raw tracepoints can be reconstructed properly
         let original_cigar = "2=2I3=2D2=";
         // CIGAR consumes: a_seq: 2 + 2 + 3 + 0 + 2 = 9 bases
-        //                 b_seq: 2 + 0 + 3 + 2 + 2 = 9 bases  
+        //                 b_seq: 2 + 0 + 3 + 2 + 2 = 9 bases
         let a_seq = b"ACGTACGTA"; // 9 bases
-        let b_seq = b"ACCGTCGAA";   // 9 bases
+        let b_seq = b"ACCGTCGAA"; // 9 bases
         let max_diff = 2;
 
         // Test raw tracepoints roundtrip
         let raw_tracepoints = cigar_to_tracepoints_raw(original_cigar, max_diff);
         let reconstructed_cigar =
             tracepoints_to_cigar(&raw_tracepoints, a_seq, b_seq, 0, 0, (2, 4, 2, 6, 1));
-        
+
         // The reconstructed CIGAR might be slightly different due to realignment,
         // but should represent the same alignment
-        assert!(!reconstructed_cigar.is_empty(), "Raw roundtrip produced empty CIGAR");
+        assert!(
+            !reconstructed_cigar.is_empty(),
+            "Raw roundtrip produced empty CIGAR"
+        );
     }
 
     #[test]
@@ -1305,7 +1452,6 @@ mod tests {
     fn test_diagonal_tracepoint_generation() {
         // Test CIGAR string with various indel patterns
         let cigar = "5=3I2=2D4=";
-        
 
         // Define test cases: (max_diff, expected_tracepoints) - updated based on actual diagonal logic
         let test_cases = vec![
@@ -1338,7 +1484,7 @@ mod tests {
         let test_cases = vec![
             // Alternating small indels - diagonal should group better
             ("2=1I2=1D2=", 2),
-            // Large indels - should behave similarly  
+            // Large indels - should behave similarly
             ("3=5I3=5D3=", 3),
             // Balanced indels - diagonal should combine opposing indels
             ("2=3I2=3D2=", 4),
@@ -1349,13 +1495,21 @@ mod tests {
             let diagonal_tracepoints = cigar_to_tracepoints_diagonal(cigar, max_diff);
 
             println!("CIGAR: {}, max_diff: {}", cigar, max_diff);
-            println!("Regular: {:?}", regular_tracepoints);  
+            println!("Regular: {:?}", regular_tracepoints);
             println!("Diagonal: {:?}", diagonal_tracepoints);
 
             // Both should preserve total sequence lengths
-            let regular_total: (usize, usize) = regular_tracepoints.iter().fold((0, 0), |(a, b), (x, y)| (a + x, b + y));
-            let diagonal_total: (usize, usize) = diagonal_tracepoints.iter().fold((0, 0), |(a, b), (x, y)| (a + x, b + y));
-            assert_eq!(regular_total, diagonal_total, "Total lengths should match for CIGAR: {}", cigar);
+            let regular_total: (usize, usize) = regular_tracepoints
+                .iter()
+                .fold((0, 0), |(a, b), (x, y)| (a + x, b + y));
+            let diagonal_total: (usize, usize) = diagonal_tracepoints
+                .iter()
+                .fold((0, 0), |(a, b), (x, y)| (a + x, b + y));
+            assert_eq!(
+                regular_total, diagonal_total,
+                "Total lengths should match for CIGAR: {}",
+                cigar
+            );
         }
     }
 
@@ -1405,16 +1559,15 @@ mod tests {
         let max_diff = 3;
 
         let variable_diagonal = cigar_to_variable_tracepoints_diagonal(cigar, max_diff);
-        
-        
+
         // Expected: with max_diff=3, the 4I exceeds limit, so we get separate segments
-        // Then after reset, 3=4D balances but 4D by itself exceeds max_diff  
+        // Then after reset, 3=4D balances but 4D by itself exceeds max_diff
         let expected = vec![
-            (3, None),        // initial 3=
-            (4, Some(0)),     // 4I (exceeds max_diff=3, separate segment)
-            (3, None),        // next 3=  
-            (0, Some(4)),     // 4D (exceeds max_diff=3, separate segment)
-            (3, None),        // final 3=
+            (3, None),    // initial 3=
+            (4, Some(0)), // 4I (exceeds max_diff=3, separate segment)
+            (3, None),    // next 3=
+            (0, Some(4)), // 4D (exceeds max_diff=3, separate segment)
+            (3, None),    // final 3=
         ];
 
         assert_eq!(
@@ -1468,7 +1621,7 @@ mod tests {
             ("1I1I1I", 2, vec![(2, 0), (1, 0)]),
             // Alternating I/D - should balance out perfectly
             ("1I1D1I1D", 1, vec![(2, 2)]), // Net diagonal distance oscillates but stays <= 1
-            // Large insertion followed by deletion - both exceed individually  
+            // Large insertion followed by deletion - both exceed individually
             ("5I3D", 3, vec![(5, 0), (0, 3)]), // Each exceeds max_diff individually
             // Insertion that balances previous deletion
             ("3D2=3I", 3, vec![(5, 5)]), // Should combine since final distance = 0
@@ -1487,46 +1640,48 @@ mod tests {
         }
     }
 
-    #[test] 
+    #[test]
     fn test_diagonal_roundtrip_compatibility() {
         // Test that diagonal tracepoints can be used with existing reconstruction functions
         let original_cigar = "2=3I2=2D3=";
-        let a_seq = b"ACGTACGTAC"; // 10 bases  
+        let a_seq = b"ACGTACGTAC"; // 10 bases
         let b_seq = b"ACAGTCGTACG"; // 11 bases
         let max_diff = 2;
 
         // Generate diagonal tracepoints
         let diagonal_tracepoints = cigar_to_tracepoints_diagonal(original_cigar, max_diff);
-        
+
         // Verify they can be reconstructed
-        let reconstructed_cigar = tracepoints_to_cigar(
-            &diagonal_tracepoints,
-            a_seq,
-            b_seq,
-            0,
-            0,
-            (2, 4, 2, 6, 1),
-        );
-        
+        let reconstructed_cigar =
+            tracepoints_to_cigar(&diagonal_tracepoints, a_seq, b_seq, 0, 0, (2, 4, 2, 6, 1));
+
         // Should not be empty and should represent a valid alignment
-        assert!(!reconstructed_cigar.is_empty(), "Diagonal roundtrip produced empty CIGAR");
-        
+        assert!(
+            !reconstructed_cigar.is_empty(),
+            "Diagonal roundtrip produced empty CIGAR"
+        );
+
         // Verify sequence length consistency
         let ops = cigar_str_to_cigar_ops(&reconstructed_cigar);
-        let (total_a, total_b) = ops.iter().fold((0, 0), |(a, b), (len, op)| {
-            match op {
-                '=' | 'M' | 'X' => (a + len, b + len),
-                'I' => (a + len, b),
-                'D' => (a, b + len),
-                _ => (a, b),
-            }
+        let (total_a, total_b) = ops.iter().fold((0, 0), |(a, b), (len, op)| match op {
+            '=' | 'M' | 'X' => (a + len, b + len),
+            'I' => (a + len, b),
+            'D' => (a, b + len),
+            _ => (a, b),
         });
-        
-        // The original CIGAR "2=3I2=2D3=" should consume: 
+
+        // The original CIGAR "2=3I2=2D3=" should consume:
         // a_seq: 2+3+2+0+3=10 bases, b_seq: 2+0+2+2+3=9 bases
         // We provided sequences of length 10 and 11, so the reconstruction is valid
-        assert_eq!(total_a, a_seq.len(), "Reconstructed CIGAR should consume correct a_seq length");
+        assert_eq!(
+            total_a,
+            a_seq.len(),
+            "Reconstructed CIGAR should consume correct a_seq length"
+        );
         // The reconstruction may not consume the full b_seq if sequences don't match exactly
-        assert!(total_b <= b_seq.len(), "Reconstructed CIGAR should not overconsume b_seq");
+        assert!(
+            total_b <= b_seq.len(),
+            "Reconstructed CIGAR should not overconsume b_seq"
+        );
     }
 }

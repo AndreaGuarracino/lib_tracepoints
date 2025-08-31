@@ -1,5 +1,21 @@
 use lib_wfa2::affine_wavefront::{AffineWavefronts, AlignmentStatus};
 use std::cmp::min;
+use std::collections::HashMap;
+
+const TSPACE: i64 = 100;
+
+// Interp table as in C
+fn interp(c: u8) -> i32 {
+    match c as char {
+        'H' | 'h' | 'P' | 'p' => 0,
+        'I' | 'i'              => 1,
+        'D' | 'd' | 'N' | 'n'  => 2,
+        '='                    => 3,
+        'X' | 'x'              => 4,
+        'M' | 'm'              => 5,
+        _                      => -1,
+    }
+}
 
 /// Output type for tracepoint processing
 enum Tracepoints {
@@ -800,6 +816,150 @@ pub fn align_sequences_wfa(
         AlignmentStatus::Completed => cigar_u8_to_cigar_ops(aligner.cigar()),
         s => panic!("Alignment failed with status: {s:?}"),
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct CigarPosition {
+    pub apos: i64,
+    pub bpos: i64,
+    pub cptr: usize, // index into cigar string
+    pub len: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct TPBundle {
+    pub diff: i64,
+    pub tlen: usize,
+    pub trace: Vec<i64>,
+}
+
+pub fn cigar2tp(
+    c: &mut CigarPosition,
+    cigar: &str,
+    aend: i64,
+    bend: i64,
+    tspace: i64,
+    bundle: &mut TPBundle,
+) -> usize {
+    let mut apos = c.apos;
+    let mut anext = ((apos / tspace) + 1) * tspace;
+    let mut bpos = c.bpos;
+    let mut blast = bpos;
+    let mut diff = 0i64;
+    let mut dlast = 0i64;
+    let mut trace = &mut bundle.trace;
+    let mut slen = 0i32;
+    let mut len = c.len;
+    let mut i = c.cptr;
+
+    let bytes = cigar.as_bytes();
+
+    while i < bytes.len() && bytes[i] != 0 {
+        if len <= 0 {
+            len = 0;
+            while i < bytes.len() && (bytes[i] as char).is_ascii_digit() {
+                len = 10 * len + (bytes[i] as i32 - '0' as i32);
+                i += 1;
+            }
+            if len == 0 {
+                len = 1;
+            }
+        }
+        if apos >= aend || bpos >= bend {
+            slen = len;
+            break;
+        }
+        let x = interp(bytes[i]);
+        if (x >= 3 || x == 1) && apos + len as i64 > aend {
+            slen = ((apos + len as i64) - aend) as i32;
+            len = (aend - apos) as i32;
+        }
+        if x >= 2 && bpos + len as i64 > bend {
+            slen = ((bpos + len as i64 + slen as i64) - bend) as i32;
+            len = (bend - bpos) as i32;
+        }
+        match x {
+            4 => {
+                while apos + len as i64 > anext {
+                    let inc = anext - apos;
+                    apos += inc;
+                    bpos += inc;
+                    diff += inc;
+                    len -= inc as i32;
+                    anext += tspace;
+                    trace.push(diff - dlast);
+                    trace.push(bpos - blast);
+                    blast = bpos;
+                    dlast = diff;
+                }
+                apos += len as i64;
+                bpos += len as i64;
+                diff += len as i64;
+            }
+            3 => {
+                while apos + len as i64 > anext {
+                    let inc = anext - apos;
+                    apos += inc;
+                    bpos += inc;
+                    len -= inc as i32;
+                    anext += tspace;
+                    trace.push(diff - dlast);
+                    trace.push(bpos - blast);
+                    blast = bpos;
+                    dlast = diff;
+                }
+                apos += len as i64;
+                bpos += len as i64;
+            }
+            2 => {
+                if (bpos - blast) + len as i64 + (anext - apos) > 200 {
+                    slen += len;
+                    break;
+                }
+                bpos += len as i64;
+                diff += len as i64;
+            }
+            1 => {
+                if TSPACE + len as i64 > 200 {
+                    slen += len;
+                    break;
+                }
+                while apos + len as i64 > anext {
+                    let inc = anext - apos;
+                    apos += inc;
+                    diff += inc;
+                    len -= inc as i32;
+                    anext += tspace;
+                    trace.push(diff - dlast);
+                    trace.push(bpos - blast);
+                    blast = bpos;
+                    dlast = diff;
+                }
+                apos += len as i64;
+                diff += len as i64;
+            }
+            0 => {}
+            _ => {}
+        }
+        if slen > 0 {
+            break;
+        }
+        len = 0;
+        i += 1;
+    }
+    if apos > anext - tspace {
+        trace.push(diff - dlast);
+        trace.push(bpos - blast);
+    }
+    bundle.diff = diff;
+    bundle.tlen = trace.len();
+
+    c.apos = apos;
+    c.bpos = bpos;
+    c.cptr = i;
+    c.len = slen;
+
+    i
 }
 
 #[cfg(test)]
@@ -1676,5 +1836,69 @@ mod tests {
             total_b <= b_seq.len(),
             "Reconstructed CIGAR should not overconsume b_seq"
         );
+    }
+
+    #[test]
+    fn test_simple_cigar() {
+        let cigar = "4=1D4=2I6X2D";
+        let mut c = CigarPosition {
+            apos: 0,
+            bpos: 0,
+            cptr: 0,
+            len: 0,
+        };
+        let mut bundle = TPBundle {
+            diff: 0,
+            tlen: 0,
+            trace: Vec::new(),
+        };
+        let end = cigar2tp(&mut c, cigar, 20, 20, 5, &mut bundle);
+        // Check trace values
+        let expected_trace = vec![1, 6, 2, 3, 5, 5, 3, 3];
+        assert_eq!(bundle.trace, expected_trace);
+        assert_eq!(bundle.tlen, expected_trace.len());
+        assert!(end <= cigar.len());
+    }
+
+    #[test]
+    fn test_cigar_with_insertions() {
+        let cigar = "10=2I5=1X";
+        let mut c = CigarPosition {
+            apos: 0,
+            bpos: 0,
+            cptr: 0,
+            len: 0,
+        };
+        let mut bundle = TPBundle {
+            diff: 0,
+            tlen: 0,
+            trace: Vec::new(),
+        };
+        let end = cigar2tp(&mut c, cigar, 20, 20, 10, &mut bundle);
+        let expected_trace = vec![0, 10, 3, 6];
+        assert_eq!(bundle.trace, expected_trace);
+        assert_eq!(bundle.tlen, expected_trace.len());
+        assert!(end <= cigar.len());
+    }
+
+    #[test]
+    fn test_cigar_end_conditions() {
+        let cigar = "5=10X";
+        let mut c = CigarPosition {
+            apos: 0,
+            bpos: 0,
+            cptr: 0,
+            len: 0,
+        };
+        let mut bundle = TPBundle {
+            diff: 0,
+            tlen: 0,
+            trace: Vec::new(),
+        };
+        let end = cigar2tp(&mut c, cigar, 10, 10, 5, &mut bundle);
+        let expected_trace = vec![0, 5, 5, 5];
+        assert_eq!(bundle.trace, expected_trace);
+        assert_eq!(bundle.tlen, expected_trace.len());
+        assert!(end <= cigar.len());
     }
 }

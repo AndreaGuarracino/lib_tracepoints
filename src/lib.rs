@@ -494,9 +494,10 @@ fn reconstruct_fastga_cigar_from_segments(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    penalties: (i32, i32, i32, i32, i32),
+    penalties: (i32, i32, i32),
 ) -> String {
-    let mut aligner = AffineWavefronts::with_penalties_edit(0, 1, 1);
+    let (_match, mismatch, gap_open1) = penalties;
+    let mut aligner = AffineWavefronts::with_penalties_edit(_match, mismatch, gap_open1);
     println!("Distance metric: {:?}", aligner.get_distance_metric());
     reconstruct_fastga_cigar_from_segments_with_aligner(
         segments,
@@ -599,7 +600,7 @@ pub fn tracepoints_to_fastga_cigar(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    penalties: (i32, i32, i32, i32, i32),
+    penalties: (i32, i32, i32),
 ) -> String {
     reconstruct_fastga_cigar_from_segments(tracepoints, a_seq, b_seq, a_start, b_start, penalties)
 }
@@ -2030,7 +2031,7 @@ mod tests {
             b_seq,
             0, // a_start
             0, // b_start
-            (2, 4, 2, 6, 1) // penalties: (mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2)
+            (0, 1, 1) // penalties: (match, mismatch, gap_open1)
         );
         
         println!("FastGA CIGAR: {}", fastga_cigar);

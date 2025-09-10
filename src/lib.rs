@@ -565,8 +565,8 @@ fn reconstruct_fastga_cigar_from_segments_with_aligner(
 
     for &(_, b_len) in segments {
         // Mixed segment - realign with WFA
-        let a_end = current_a + 5;
-        let b_end = current_b + b_len;
+        let a_end = (current_a + 100).min(a_seq.len());
+	let b_end = (current_b + b_len).min(b_seq.len());
         let seg_ops =
             align_sequences_wfa(&a_seq[current_a..a_end], &b_seq[current_b..b_end], aligner);
         cigar_ops.extend(seg_ops);

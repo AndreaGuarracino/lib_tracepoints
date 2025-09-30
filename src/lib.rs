@@ -499,7 +499,6 @@ fn reconstruct_fastga_cigar_from_segments(
 ) -> String {
     let (_match, mismatch, gap_open1) = penalties;
     let mut aligner = AffineWavefronts::with_penalties_edit(_match, mismatch, gap_open1);
-    println!("Distance metric: {:?}", aligner.get_distance_metric());
     reconstruct_fastga_cigar_from_segments_with_aligner(
         segments,
         a_seq,
@@ -570,17 +569,6 @@ fn reconstruct_fastga_cigar_from_segments_with_aligner(
     let mut b_end = (current_b + segments[0].1).min(b_seq.len());
 
     for (i, &(_, b_len)) in segments.iter().enumerate() {
-
-        // Print sequences at each iteration
-        println!("current_a={}, current_b={}, a_end={}, b_end={}", 
-                 current_a, current_b, a_end, b_end);
-        println!("  a_seq[{}..{}]: {}", 
-                 current_a, a_end, 
-                 String::from_utf8_lossy(&a_seq[current_a..a_end]));
-        println!("  b_seq[{}..{}]: {}", 
-                 current_b, b_end, 
-                 String::from_utf8_lossy(&b_seq[current_b..b_end]));
-        println!("  Segment lengths: a_len=100, b_len={}", b_len);
 
         let seg_ops =
             align_sequences_wfa(&a_seq[current_a..a_end], &b_seq[current_b..b_end], aligner);

@@ -1,5 +1,21 @@
 use lib_wfa2::affine_wavefront::{AffineWavefronts, AlignmentStatus};
 use std::cmp::min;
+use std::collections::HashMap;
+
+const TSPACE: i64 = 100;
+
+// Interp table as in C
+fn interp(c: u8) -> i32 {
+    match c as char {
+        'H' | 'h' | 'P' | 'p' => 0,
+        'I' | 'i'              => 1,
+        'D' | 'd' | 'N' | 'n'  => 2,
+        '='                    => 3,
+        'X' | 'x'              => 4,
+        'M' | 'm'              => 5,
+        _                      => -1,
+    }
+}
 
 /// Output type for tracepoint processing
 enum Tracepoints {
@@ -469,6 +485,31 @@ fn reconstruct_cigar_from_segments(
     )
 }
 
+/// Reconstruct CIGAR string from tracepoint segments using WFA alignment
+///
+/// penalties: (mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2)
+fn reconstruct_fastga_cigar_from_segments(
+    segments: &[(usize, usize)],
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    b_start: usize,
+    start_offset: usize,
+    penalties: (i32, i32, i32),
+) -> String {
+    let (_match, mismatch, gap_open1) = penalties;
+    let mut aligner = AffineWavefronts::with_penalties_edit(_match, mismatch, gap_open1);
+    reconstruct_fastga_cigar_from_segments_with_aligner(
+        segments,
+        a_seq,
+        b_seq,
+        a_start,
+        b_start,
+        start_offset,
+        &mut aligner,
+    )
+}
+
 /// Reconstruct CIGAR string from tracepoint segments using provided aligner
 ///
 /// Takes an aligner parameter to allow callers to prepare an aligner and reuse it multiple times.
@@ -508,6 +549,45 @@ fn reconstruct_cigar_from_segments_with_aligner(
     cigar_ops_to_cigar_string(&cigar_ops)
 }
 
+/// Reconstruct fastga CIGAR string from tracepoint segments using provided aligner
+///
+/// Takes an aligner parameter to allow callers to prepare an aligner and reuse it multiple times.
+fn reconstruct_fastga_cigar_from_segments_with_aligner(
+    segments: &[(usize, usize)],
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    b_start: usize,
+    start_offset: usize,
+    aligner: &mut AffineWavefronts,
+) -> String {
+    let mut cigar_ops = Vec::new();
+    let mut current_a = a_start;
+    let mut current_b = b_start;
+
+    let mut a_end = 100 - (start_offset % 100);
+    let mut b_end = (current_b + segments[0].1).min(b_seq.len());
+
+    for (i, &(_, b_len)) in segments.iter().enumerate() {
+
+        let seg_ops =
+            align_sequences_wfa(&a_seq[current_a..a_end], &b_seq[current_b..b_end], aligner);
+        cigar_ops.extend(seg_ops);
+        current_a = a_end;
+        current_b = b_end;
+
+        if i == segments.len() - 1 {
+            break; // Skip the last segment
+        }
+
+        // Mixed segment - realign with WFA
+        a_end = (current_a + 100).min(a_seq.len());
+	    b_end = (current_b + segments[i + 1].1).min(b_seq.len());
+    }
+    merge_cigar_ops(&mut cigar_ops);
+    cigar_ops_to_cigar_string(&cigar_ops)
+}
+
 /// Reconstruct CIGAR string from basic tracepoints
 ///
 /// penalties: (mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2)
@@ -520,6 +600,21 @@ pub fn tracepoints_to_cigar(
     penalties: (i32, i32, i32, i32, i32),
 ) -> String {
     reconstruct_cigar_from_segments(tracepoints, a_seq, b_seq, a_start, b_start, penalties)
+}
+
+/// Reconstruct fastga CIGAR string from basic tracepoints
+///
+/// penalties: (mismatch, gap_open1, gap_ext1, gap_open2, gap_ext2)
+pub fn tracepoints_to_fastga_cigar(
+    tracepoints: &[(usize, usize)],
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    b_start: usize,
+    start_offset: usize,
+    penalties: (i32, i32, i32),
+) -> String {
+    reconstruct_fastga_cigar_from_segments(tracepoints, a_seq, b_seq, a_start, b_start, start_offset, penalties)
 }
 
 /// Reconstruct CIGAR string from mixed representation tracepoints
@@ -802,6 +897,150 @@ pub fn align_sequences_wfa(
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct CigarPosition {
+    pub apos: i64,
+    pub bpos: i64,
+    pub cptr: usize, // index into cigar string
+    pub len: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct TPBundle {
+    pub diff: i64,
+    pub tlen: usize,
+    pub trace: Vec<i64>,
+}
+
+pub fn cigar2tp(
+    c: &mut CigarPosition,
+    cigar: &str,
+    aend: i64,
+    bend: i64,
+    tspace: i64,
+    bundle: &mut TPBundle,
+) -> usize {
+    let mut apos = c.apos;
+    let mut anext = ((apos / tspace) + 1) * tspace;
+    let mut bpos = c.bpos;
+    let mut blast = bpos;
+    let mut diff = 0i64;
+    let mut dlast = 0i64;
+    let mut trace = &mut bundle.trace;
+    let mut slen = 0i32;
+    let mut len = c.len;
+    let mut i = c.cptr;
+
+    let bytes = cigar.as_bytes();
+
+    while i < bytes.len() && bytes[i] != 0 {
+        if len <= 0 {
+            len = 0;
+            while i < bytes.len() && (bytes[i] as char).is_ascii_digit() {
+                len = 10 * len + (bytes[i] as i32 - '0' as i32);
+                i += 1;
+            }
+            if len == 0 {
+                len = 1;
+            }
+        }
+        if apos >= aend || bpos >= bend {
+            slen = len;
+            break;
+        }
+        let x = interp(bytes[i]);
+        if (x >= 3 || x == 1) && apos + len as i64 > aend {
+            slen = ((apos + len as i64) - aend) as i32;
+            len = (aend - apos) as i32;
+        }
+        if x >= 2 && bpos + len as i64 > bend {
+            slen = ((bpos + len as i64 + slen as i64) - bend) as i32;
+            len = (bend - bpos) as i32;
+        }
+        match x {
+            4 => {
+                while apos + len as i64 > anext {
+                    let inc = anext - apos;
+                    apos += inc;
+                    bpos += inc;
+                    diff += inc;
+                    len -= inc as i32;
+                    anext += tspace;
+                    trace.push(diff - dlast);
+                    trace.push(bpos - blast);
+                    blast = bpos;
+                    dlast = diff;
+                }
+                apos += len as i64;
+                bpos += len as i64;
+                diff += len as i64;
+            }
+            3 => {
+                while apos + len as i64 > anext {
+                    let inc = anext - apos;
+                    apos += inc;
+                    bpos += inc;
+                    len -= inc as i32;
+                    anext += tspace;
+                    trace.push(diff - dlast);
+                    trace.push(bpos - blast);
+                    blast = bpos;
+                    dlast = diff;
+                }
+                apos += len as i64;
+                bpos += len as i64;
+            }
+            2 => {
+                if (bpos - blast) + len as i64 + (anext - apos) > 200 {
+                    slen += len;
+                    break;
+                }
+                bpos += len as i64;
+                diff += len as i64;
+            }
+            1 => {
+                if TSPACE + len as i64 > 200 {
+                    slen += len;
+                    break;
+                }
+                while apos + len as i64 > anext {
+                    let inc = anext - apos;
+                    apos += inc;
+                    diff += inc;
+                    len -= inc as i32;
+                    anext += tspace;
+                    trace.push(diff - dlast);
+                    trace.push(bpos - blast);
+                    blast = bpos;
+                    dlast = diff;
+                }
+                apos += len as i64;
+                diff += len as i64;
+            }
+            0 => {}
+            _ => {}
+        }
+        if slen > 0 {
+            break;
+        }
+        len = 0;
+        i += 1;
+    }
+    if apos > anext - tspace {
+        trace.push(diff - dlast);
+        trace.push(bpos - blast);
+    }
+    bundle.diff = diff;
+    bundle.tlen = trace.len();
+
+    c.apos = apos;
+    c.bpos = bpos;
+    c.cptr = i;
+    c.len = slen;
+
+    i
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -846,6 +1085,7 @@ mod tests {
 
         // Test tracepoints roundtrip
         let tracepoints = cigar_to_tracepoints(original_cigar, max_diff);
+        println!("Tracepoints: {:?}", tracepoints);
         let reconstructed_cigar =
             tracepoints_to_cigar(&tracepoints, a_seq, b_seq, 0, 0, (2, 4, 2, 6, 1));
         assert_eq!(
@@ -1343,6 +1583,7 @@ mod tests {
 
         // Test raw tracepoints roundtrip
         let raw_tracepoints = cigar_to_tracepoints_raw(original_cigar, max_diff);
+        println!("Tracepoints: {:?}", raw_tracepoints);
         let reconstructed_cigar =
             tracepoints_to_cigar(&raw_tracepoints, a_seq, b_seq, 0, 0, (2, 4, 2, 6, 1));
 
@@ -1352,6 +1593,7 @@ mod tests {
             !reconstructed_cigar.is_empty(),
             "Raw roundtrip produced empty CIGAR"
         );
+        println!("reconstructed_cigar: {:?}", reconstructed_cigar);
     }
 
     #[test]
@@ -1677,4 +1919,241 @@ mod tests {
             "Reconstructed CIGAR should not overconsume b_seq"
         );
     }
+
+    #[test]
+    fn test_simple_cigar() {
+        let cigar = "4=1D4=2I6X2D";
+        let mut c = CigarPosition {
+            apos: 0,
+            bpos: 0,
+            cptr: 0,
+            len: 0,
+        };
+        let mut bundle = TPBundle {
+            diff: 0,
+            tlen: 0,
+            trace: Vec::new(),
+        };
+        let end = cigar2tp(&mut c, cigar, 20, 20, 5, &mut bundle);
+        // Check trace values
+        let expected_trace = vec![1, 6, 2, 3, 5, 5, 3, 3];
+        assert_eq!(bundle.trace, expected_trace);
+        assert_eq!(bundle.tlen, expected_trace.len());
+        assert!(end <= cigar.len());
+    }
+
+    #[test]
+    fn test_cigar_with_insertions() {
+        let cigar = "10=2I5=1X";
+        let mut c = CigarPosition {
+            apos: 0,
+            bpos: 0,
+            cptr: 0,
+            len: 0,
+        };
+        let mut bundle = TPBundle {
+            diff: 0,
+            tlen: 0,
+            trace: Vec::new(),
+        };
+        let end = cigar2tp(&mut c, cigar, 20, 20, 10, &mut bundle);
+        let expected_trace = vec![0, 10, 3, 6];
+        assert_eq!(bundle.trace, expected_trace);
+        assert_eq!(bundle.tlen, expected_trace.len());
+        assert!(end <= cigar.len());
+    }
+
+    #[test]
+    fn test_cigar_end_conditions() {
+        let cigar = "5=10X";
+        let mut c = CigarPosition {
+            apos: 0,
+            bpos: 0,
+            cptr: 0,
+            len: 0,
+        };
+        let mut bundle = TPBundle {
+            diff: 0,
+            tlen: 0,
+            trace: Vec::new(),
+        };
+        let end = cigar2tp(&mut c, cigar, 10, 10, 5, &mut bundle);
+        let expected_trace = vec![0, 5, 5, 5];
+        assert_eq!(bundle.trace, expected_trace);
+        assert_eq!(bundle.tlen, expected_trace.len());
+        assert!(end <= cigar.len());
+    }
+
+    #[test]
+    fn test_tracepoints_to_fastga_cigar() {
+        // Use the specified sequences
+        let a_seq = b"ACGTACGTACACGTACGTAC"; // 20 bases
+        let b_seq = b"AGTACGTACACGTACGTAC"; // 19 bases (missing C)
+        
+        // Create a CIGAR that represents the alignment between these sequences
+        // a_seq: ACGTACGTACACGTACGTAC
+        // b_seq:  AGTACGTACACGTACGTAC
+        // The first 'C' in a_seq is missing in b_seq, so we have a deletion
+        let cigar = "1=1I18="; // 1 match, 1 insertion, 18 matches
+
+        // Set up initial position and bundle for cigar2tp
+        let mut c = CigarPosition {
+            apos: 0,
+            bpos: 0,
+            cptr: 0,
+            len: 0,
+        };
+        let mut bundle = TPBundle {
+            diff: 0,
+            tlen: 0,
+            trace: Vec::new(),
+        };
+        
+        // Generate tracepoints using cigar2tp
+        let tspace = 5; // Trace space interval
+        let aend = 20;  // End position for a_seq
+        let bend = 19;  // End position for b_seq
+        let _end = cigar2tp(&mut c, cigar, aend, bend, tspace, &mut bundle);
+        
+        println!("Generated trace: {:?}", bundle.trace);
+        println!("Trace length: {}", bundle.tlen);
+        println!("Final diff: {}", bundle.diff);
+        println!("Final positions: apos={}, bpos={}", c.apos, c.bpos);
+        
+        // Convert trace to tracepoints format expected by tracepoints_to_fastga_cigar
+        // The trace contains alternating (diff_delta, bpos) pairs
+        let mut tracepoints = Vec::new();
+        
+        // Process trace pairs to create tracepoints
+        for i in (0..bundle.trace.len()).step_by(2) {
+            if i + 1 < bundle.trace.len() {
+                let _diff_delta = bundle.trace[i];
+                let bpos = bundle.trace[i + 1];
+
+                tracepoints.push((_diff_delta as usize, bpos as usize));
+            }
+        }
+        
+        println!("Tracepoints for fastga: {:?}", tracepoints);
+        
+        // Test tracepoints_to_fastga_cigar
+        let fastga_cigar = tracepoints_to_fastga_cigar(
+            &tracepoints,
+            a_seq,
+            b_seq,
+            0, // a_start
+            0, // b_start
+            0,
+            (0, 1, 1) // penalties: (match, mismatch, gap_open1)
+        );
+        
+        println!("FastGA CIGAR: {}", fastga_cigar);
+        
+        // Verify the result is valid
+        assert!(!fastga_cigar.is_empty(), "FastGA CIGAR should not be empty");
+        assert_eq!(cigar, fastga_cigar, "FastGA CIGAR should match original CIGAR");
+    }
+
+    #[test]
+    fn test_tracepoints_to_fastga_cigar_with_fasta() {
+        use bio::io::fasta;
+        use std::fs::File;
+        use std::io::BufReader;
+
+        // Read the first sequence from the FASTA file
+        let reader = fasta::Reader::new(BufReader::new(File::open("test_chr1.fa").unwrap()));
+        let record = reader.records().next().unwrap().unwrap();
+        // let a_seq = record.seq().to_vec();
+
+        // // For demonstration, let's use the same sequence as both a_seq and b_seq
+        // // In practice, you might want to mutate b_seq to introduce indels/mismatches
+        // let b_seq = a_seq.clone();
+
+        // println!(
+        //     "a_seq[1804..2240]: {}",
+        //     String::from_utf8_lossy(&a_seq[1804..2240])
+        // );
+        // println!(
+        //     "b_seq[176652..177103]: {}",
+        //     String::from_utf8_lossy(&b_seq[176652..177103])
+        // );
+
+        let a_seq: &'static [u8; 670] = b"ACCCTGGCCAACCTGTCTCTCAACTTACCCTCCATTACCCTGCCTCCACTCGTTACCCTGTCCCATTCAACCATACCACTCCGAACCACCATCCATCCCTCTACTTACTACCACTCACCCACCGTTACCCTCCAATTACCCATATCCAACCCACTGCCACTTACCCTACCATTACCCTACCATCCACCATGACCTACTCACCATACTGTTCTTCTACCCACCATATTGAAACGCTAACAAATGATCGTAAATAACACACACGTGCTTACCCTACCACTTTATACCACCACCACATGCCATACTCACCCTCACTTGTATACTGATTTTACGTACGCACACGGATGCTACAGTATATACCATCTCAAACTTACCCTACTCTCAGATTCCACTTCACTCCATGGCCCATCTCTCACTGAATCAGTACCAAATGCACTCACATCATTATGCACGGCACTTGCCTCAGCGGTCTATACCCTGTGCCATTTACCCATAACGCCCATCATTATCCACATTTTGATATCTATATCTCATTCGGCGGTCCCAAATATTGTATAACTGCCCTTAATACATACGTTATACCACTTTTGCACCATATACTTACCACTCCATTTATATACACTTATGTCAATATTACAGAAAAATCCCCACAAAAATCACCTAAACATAAAAA";
+    
+        let b_seq = b"ACCCTGTCCAACCTCTCTCTGAACTTACCCTCCATTACCCTACTCTCCACTCGTTACCCTGTCCCATTCAACCATACCACTCCGAACCACCATCCATCCCTCTACTTACTACCACTCACCCACCGTTACCCTCCAATTACCCATATCCAACCCACTGCCACTTACCCTGCCGTTCCTCTACCATCCACCATCTGCTACTCACCATACTGTTGTTCACCCACCATATTGAAACGCTAACAAATGATCGTAAATAATACACACGTGCTTACCCTACCACTTTATACCACCACCACTACCACCACCACCACATGCCATACTCACCCTCACTTGTATACTGATTTTACGTACGCACACGGATGCTACAGTATATACCATCTCAACTTACCCTACTTTCATATTCCACTCCACTCCCATCTCTCATTTCATCAGTACAAATGCACCCACATCATCATGCACGGCACTTGCCTCAGCGGTCTATACCCTGTGCCATTTACCCATAACGCCCACGATTATCCACATTTTAATATCTATATCTCATTCGGCGGCCCCAAATATTGTATAACTGCTCTTAATACATACGTTATACCACTTTTACGCTATATACTAACCATTCAATTTATATACACTTATGTCAATATTACAGAAAAATCACCACTAAAATCACCTAAACATAAAAA";
+
+        println!("a_seq length: {}", a_seq.len());
+        println!("b_seq length: {}", b_seq.len());
+
+        // Use the provided original CIGAR string
+        // let cigar = concat!(
+        //     "29=1I1=1X1D12=1X5=1X35=1X5=1X1=1X6=1X8=1I2=1X1=1X1D6=1X17=1X17=1X5=1X4=1X3=1X5=1X2=1X14=1X2=1X4=1X3=1I1=1X1D8=2X2=1X2=1X14=1X2=1X2=1X2=1X5=1X5=1X5=1X2=1X19=1X2=2X2=1X8=1X6D2=1X3=2X6=1X5=1X8=1X2=1X33=1D2=1X4=9D6=1X7=1X7=1X4=1I5=1D3=1X1=1X3=1X2=1X1=1I6="
+        // );
+        let cigar = "6=1X7=1X5=1X20=1X1=1D124=1X2=1X2=1I2=1D14=3X17=1X3=1I39=1X38=15D72=1I11=1X3=1X8=1X4=6I11=1X1=2X7=1I9=1X8=1X56=1I1=1D14=1X22=1X20=1X26=1X1=1X1=1X7=1X4=1X2=1X36=1X4=1X21=";
+
+        // CIGZIP output:
+        // 29=3X12=1X5=1X35
+        // =1X5=1X1=1X6=1X8=1D2=1X1=1I1X6=1X17=1X17=1X5=1X4=1X3=1X5=1X2=1X14=1X2=1X4=1X3=3X8=2X2=1X2=1X14=1X2=1X2=1X2=1X5=1X5=1X5=1X2=1X19=1X2=2X2=1X8=1X1=2X2=2I2=1I1X1=1X4=1I1=1I1=1I4
+        // =1X8=1X2=1X33=1I2=4I1=2I2=1I1=1I1=1I6=1X7=1X7=1X4=1D5=1I3=1X1=1X3=1X2=1X1=1D6=
+
+        // Set up initial position and bundle for cigar2tp
+        let mut c = CigarPosition {
+            apos: 94,
+            bpos: 1056329,
+            cptr: 0,
+            len: 0,
+        };
+        let mut bundle = TPBundle {
+            diff: 0,
+            tlen: 0,
+            trace: Vec::new(),
+        };
+        
+        // Generate tracepoints using cigar2tp
+        let tspace = 100; // Trace space interval
+        let aend = 230218;  // End position for a_seq
+        let bend = 1062383;  // End position for b_seq
+        let _end = cigar2tp(&mut c, cigar, aend, bend, tspace, &mut bundle);
+        
+        println!("Generated trace: {:?}", bundle.trace);
+        println!("Trace length: {}", bundle.tlen);
+        println!("Final diff: {}", bundle.diff);
+        println!("Final positions: apos={}, bpos={}", c.apos, c.bpos);
+        
+        // Convert trace to tracepoints format expected by tracepoints_to_fastga_cigar
+        // The trace contains alternating (diff_delta, bpos) pairs
+        let mut tracepoints = Vec::new();
+        
+        // Process trace pairs to create tracepoints
+        for i in (0..bundle.trace.len()).step_by(2) {
+            if i + 1 < bundle.trace.len() {
+                let _diff_delta = bundle.trace[i];
+                let bpos = bundle.trace[i + 1];
+
+                tracepoints.push((_diff_delta as usize, bpos as usize));
+            }
+        }
+        
+        println!("Tracepoints for fastga: {:?}", tracepoints);
+        
+        // Test tracepoints_to_fastga_cigar
+        let fastga_cigar = tracepoints_to_fastga_cigar(
+            &tracepoints,
+            a_seq,
+            b_seq,
+            0, // a_start
+            0, // b_start
+            94,
+            (0, 1, 1) // penalties: (match, mismatch, gap_open1)
+        );
+        
+        println!("FastGA CIGAR: {}", fastga_cigar);
+        
+        // Verify the result is valid
+        assert!(!fastga_cigar.is_empty(), "FastGA CIGAR should not be empty");
+        assert_eq!(cigar, fastga_cigar, "FastGA CIGAR should match original CIGAR");
+    }
 }
+
+// 6=1X7=1X5=1X20=1X1=1D124=1X2=1X2=  1I2=1D  14=3X17=1X3=1I39=1X38= 15D72=      1I11=1X3=1X8=1X  4=6I11=   1X1=2X7=1I 9=  1X8=1X56=       1I1=1D     14=1X22=1X20=1X26=1X1=1X1=1X7=1X4=1X2=1X36=1X4=1X21=
+// 6=1X7=1X5=1X20=1X1=1D124=1X2=1X2=  1X1=1X  14=3X17=1X3=1I39=1X38= 1D1=14D71=  1I11=1X3=1X8=1X  6=4I1=2I8= 1X1=2X 8=1I 8= 1X8=1X56=  2X        14=1X22=1X20=1X26=1X1=1X1=1X7=1X4=1X2=1X36=1X4=1X21=

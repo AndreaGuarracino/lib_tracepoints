@@ -33,7 +33,7 @@ cargo build --release
 ## Usage
 
 See the examples:
-- [`dual_gap_affine.rs`](examples/basic.rs) - Using dual gap-affine distance
+- [`dual_gap_affine.rs`](examples/dual_gap_affine.rs) - Using dual gap-affine distance
 - [`edit_distance.rs`](examples/edit_distance.rs) - Using edit distance
 
 Run with: `cargo run --example dual_gap_affine` or `cargo run --example edit_distance`.

@@ -27,35 +27,16 @@ cargo build --release
 ## Features
 
 - **Tracepoints**: Simple `(a_len, b_len)` pairs for each segment
-- **CIGAR Reconstruction**: Efficient conversion from tracepoints back to CIGAR strings using WFA alignment
+- **CIGAR reconstruction**: Efficient conversion from tracepoints back to CIGAR strings using WFA alignment
+- **Distance modes**: Support for both affine gap penalties and edit distance
 
 ## Usage
 
-```rust
-use lib_tracepoints::{cigar_to_tracepoints, tracepoints_to_cigar};
+See the examples:
+- [`dual_gap_affine.rs`](examples/basic.rs) - Using dual gap-affine distance
+- [`edit_distance.rs`](examples/edit_distance.rs) - Using edit distance
 
-fn main() {
-    // Convert CIGAR to tracepoints with max difference of 5
-    let cigar = "10=2D5=2I3=";
-    let tracepoints = cigar_to_tracepoints(&cigar, 5);
-    
-    // Reconstruct CIGAR from tracepoints
-    let a_seq = "ACGTACGTACACGTACGTAC";
-    let b_seq = "ACGTACGTACACGTACGTAC";
-    let reconstructed_cigar = tracepoints_to_cigar(
-        &tracepoints,
-        a_seq.as_bytes(),
-        b_seq.as_bytes(),
-        0,  // a_start
-        0,  // b_start
-        2,  // mismatch penalty
-        4,  // gap_open1
-        2,  // gap_ext1
-        6,  // gap_open2
-        1,  // gap_ext2
-    );
-}
-```
+Run with: `cargo run --example dual_gap_affine` or `cargo run --example edit_distance`.
 
 ## How It Works
 

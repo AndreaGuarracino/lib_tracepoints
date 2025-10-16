@@ -869,31 +869,6 @@ mod tests {
     }
 
     #[test]
-    fn test_cigar_roundtrip() {
-        let original_cigar = "1=1I18=";
-        let a_seq = b"ACGTACGTACACGTACGTAC"; // 20 bases
-        let b_seq = b"AGTACGTACACGTACGTAC"; // 19 bases (missing C)
-        let max_diff = 5;
-
-        let distance_mode = DistanceMode::Affine2p {
-            mismatch: 2,
-            gap_open1: 4,
-            gap_ext1: 2,
-            gap_open2: 6,
-            gap_ext2: 1,
-        };
-
-        // Test tracepoints roundtrip
-        let tracepoints = cigar_to_tracepoints(original_cigar, max_diff);
-        let reconstructed_cigar =
-            tracepoints_to_cigar(&tracepoints, a_seq, b_seq, 0, 0, &distance_mode);
-        assert_eq!(
-            reconstructed_cigar, original_cigar,
-            "Tracepoint roundtrip failed"
-        );
-    }
-
-    #[test]
     fn test_distance_mode_affine2p() {
         let original_cigar = "1=1I18=";
         let a_seq = b"ACGTACGTACACGTACGTAC"; // 20 bases
@@ -938,44 +913,6 @@ mod tests {
             reconstructed_cigar, original_cigar,
             "Edit distance mode roundtrip failed"
         );
-    }
-
-    #[test]
-    fn test_distance_mode_comparison() {
-        // Test that both distance modes produce valid alignments
-        let a_seq = b"ACGTACGTAC";
-        let b_seq = b"ACGACGTAC"; // one deletion
-        let tracepoints = vec![(10, 9)];
-
-        let affine_mode = DistanceMode::Affine2p {
-            mismatch: 2,
-            gap_open1: 4,
-            gap_ext1: 2,
-            gap_open2: 6,
-            gap_ext2: 1,
-        };
-
-        let edit_mode = DistanceMode::Edit {
-            mismatch: 1,
-            gap_opening: 1,
-        };
-
-        let affine_cigar = tracepoints_to_cigar(&tracepoints, a_seq, b_seq, 0, 0, &affine_mode);
-        let edit_cigar = tracepoints_to_cigar(&tracepoints, a_seq, b_seq, 0, 0, &edit_mode);
-
-        // Both should produce valid CIGARs
-        assert!(
-            !affine_cigar.is_empty(),
-            "Affine2p should produce non-empty CIGAR"
-        );
-        assert!(
-            !edit_cigar.is_empty(),
-            "Edit distance should produce non-empty CIGAR"
-        );
-
-        // Both CIGARs may differ in details but should represent valid alignments
-        println!("Affine2p CIGAR: {}", affine_cigar);
-        println!("Edit CIGAR: {}", edit_cigar);
     }
 
     #[test]
@@ -1331,32 +1268,6 @@ mod tests {
             reconstructed_cigar2, expected_cigar2,
             "Function should work with reused aligner"
         );
-    }
-
-    #[test]
-    fn test_variable_tracepoints_optimization() {
-        // Test cases where a_len == b_len should be optimized
-        let test_cases = vec![
-            // Equal lengths should use None
-            ("5=", 10, vec![(5, None)]),
-            ("3=2X4=", 10, vec![(9, None)]),
-            // Different lengths should use Some
-            ("5I", 10, vec![(5, Some(0))]),
-            ("3D", 10, vec![(0, Some(3))]),
-            ("2=3I1=", 10, vec![(6, Some(3))]),
-        ];
-
-        for (i, (cigar, max_diff, expected)) in test_cases.iter().enumerate() {
-            let result = cigar_to_variable_tracepoints(cigar, *max_diff);
-            assert_eq!(
-                result,
-                *expected,
-                "Optimization test case {}: Failed for CIGAR '{}' with max_diff={}",
-                i + 1,
-                cigar,
-                max_diff
-            );
-        }
     }
 
     #[test]

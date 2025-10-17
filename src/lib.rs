@@ -475,6 +475,118 @@ pub fn cigar_to_variable_tracepoints_diagonal(
     to_variable_format(cigar_to_tracepoints_diagonal(cigar, max_diff))
 }
 
+/// Generate FASTGA-style tracepoints from CIGAR string
+///
+/// Creates tracepoints at regular intervals based on absolute query positions.
+/// Returns (diff_delta, b_length) pairs representing alignment segments.
+pub fn cigar_to_tracepoints_fastga(
+    cigar: &str, 
+    trace_spacing: usize,
+    a_start: usize,
+    b_start: usize,
+) -> Vec<(usize, usize)> {
+    let ops = cigar_str_to_cigar_ops(cigar);
+    let mut tracepoints = Vec::new();
+    
+    let mut a_pos = a_start;
+    let mut b_pos = b_start;
+    let mut last_b_pos = b_start;
+    let mut diff = 0i64;
+    let mut last_diff = 0i64;
+    
+    // Calculate next trace boundary based on absolute position
+    let mut next_trace = ((a_start / trace_spacing) + 1) * trace_spacing;
+    
+    for (mut len, op) in ops {
+        while len > 0 {
+            let remaining_to_trace = next_trace.saturating_sub(a_pos);
+            
+            // Determine how much to consume based on operation type
+            let consume = match op {
+                '=' | 'M' => {
+                    let step = len.min(remaining_to_trace);
+                    a_pos += step;
+                    b_pos += step;
+                    step
+                }
+                'X' => {
+                    let step = len.min(remaining_to_trace);
+                    diff += step as i64;
+                    a_pos += step;
+                    b_pos += step;
+                    step
+                }
+                'I' => {
+                    // Check if segment would be too long (>200bp)
+                    if trace_spacing + len > 200 {
+                        // Force a tracepoint before this large insertion
+                        if a_pos > next_trace - trace_spacing {
+                            tracepoints.push((
+                                (diff - last_diff).unsigned_abs() as usize,
+                                b_pos - last_b_pos,
+                            ));
+                            last_diff = diff;
+                            last_b_pos = b_pos;
+                            next_trace = ((a_pos / trace_spacing) + 1) * trace_spacing;
+                        }
+                    }
+                    
+                    let step = len.min(remaining_to_trace);
+                    diff += step as i64;
+                    a_pos += step;
+                    step
+                }
+                'D' | 'N' => {
+                    // Check if segment would be too long
+                    if (b_pos - last_b_pos) + len + (next_trace - a_pos) > 200 {
+                        // Force a tracepoint
+                        if a_pos > next_trace - trace_spacing {
+                            tracepoints.push((
+                                (diff - last_diff).unsigned_abs() as usize,
+                                b_pos - last_b_pos,
+                            ));
+                            last_diff = diff;
+                            last_b_pos = b_pos;
+                        }
+                    }
+                    
+                    diff += len as i64;
+                    b_pos += len;
+                    len // Consume all since it doesn't affect a_pos
+                }
+                'H' | 'S' | 'P' => {
+                    // Skip special operations
+                    len
+                }
+                _ => panic!("Invalid CIGAR operation: {op}"),
+            };
+            
+            len -= consume;
+            
+            // Check if we've reached a trace boundary
+            if a_pos >= next_trace {
+                tracepoints.push((
+                    (diff - last_diff).unsigned_abs() as usize,
+                    b_pos - last_b_pos,
+                ));
+                last_diff = diff;
+                last_b_pos = b_pos;
+                next_trace += trace_spacing;
+            }
+        }
+    }
+    
+    // Add final tracepoint if we've moved past the last boundary
+    if a_pos > next_trace - trace_spacing {
+        tracepoints.push((
+            (diff - last_diff).unsigned_abs() as usize,
+            b_pos - last_b_pos,
+        ));
+    }
+    
+    tracepoints
+}
+
 /// Create an aligner with the given distance mode
 fn create_aligner(distance_mode: &DistanceMode) -> AffineWavefronts {
     distance_mode.create_aligner()
@@ -741,6 +853,66 @@ pub fn variable_tracepoints_to_cigar_diagonal_with_aligner(
         b_start,
         aligner,
     )
+}
+
+/// Reconstruct CIGAR from FASTGA-style tracepoints
+///
+/// Uses edit distance internally for alignment.
+pub fn tracepoints_to_cigar_fastga(
+    tracepoints: &[(usize, usize)],
+    trace_spacing: usize,
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    b_start: usize,
+) -> String {
+    // Use edit distance mode as FASTGA does
+    let distance_mode = DistanceMode::Edit {
+        mismatch: 1,
+        gap_opening: 1,
+    };
+    
+    let mut aligner = distance_mode.create_aligner();
+    let mut cigar_ops = Vec::new();
+    let mut current_a = 0;  // Indices into the sequences (not absolute positions)
+    let mut current_b = 0;
+    
+    // Calculate first segment length based on starting position
+    let first_segment_a_len = trace_spacing - (a_start % trace_spacing);
+    
+    for (i, &(_, b_len)) in tracepoints.iter().enumerate() {
+        // Determine a_length for this segment
+        let a_len = if i == 0 {
+            first_segment_a_len
+        } else {
+            trace_spacing
+        };
+        
+        // Calculate segment boundaries
+        let a_end = (current_a + a_len).min(a_seq.len());
+        let b_end = (current_b + b_len).min(b_seq.len());
+        
+        // Skip if we've exhausted either sequence
+        if current_a >= a_seq.len() || current_b >= b_seq.len() {
+            break;
+        }
+        
+        // Align this segment if it has content
+        if a_end > current_a && b_end > current_b {
+            let seg_ops = align_sequences_wfa(
+                &a_seq[current_a..a_end],
+                &b_seq[current_b..b_end],
+                &mut aligner,
+            );
+            cigar_ops.extend(seg_ops);
+        }
+        
+        current_a = a_end;
+        current_b = b_end;
+    }
+    
+    merge_cigar_ops(&mut cigar_ops);
+    cigar_ops_to_cigar_string(&cigar_ops)
 }
 
 // Helper functions

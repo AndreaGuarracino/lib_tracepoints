@@ -475,17 +475,38 @@ pub fn cigar_to_variable_tracepoints_diagonal(
     to_variable_format(cigar_to_tracepoints_diagonal(cigar, max_diff))
 }
 
+/// Reverse a CIGAR string for complement alignments
+/// 
+/// Reverses both the order of operations and the numbers within each operation.
+/// For example: "3M2I5D" becomes "5D2I3M"
+fn reverse_cigar(cigar: &str) -> String {
+    let ops = cigar_str_to_cigar_ops(cigar);
+    ops.iter()
+        .rev()
+        .map(|(len, op)| format!("{}{}", len, op))
+        .collect()
+}
+
 /// Generate FASTGA-style tracepoints from CIGAR string
 ///
 /// Creates tracepoints at regular intervals based on absolute query positions.
 /// Returns (diff_delta, b_length) pairs representing alignment segments.
+/// If `complement` is true, reverses the CIGAR string before processing.
 pub fn cigar_to_tracepoints_fastga(
     cigar: &str, 
     trace_spacing: usize,
     a_start: usize,
     b_start: usize,
+    complement: bool,
 ) -> Vec<(usize, usize)> {
-    let ops = cigar_str_to_cigar_ops(cigar);
+    // Reverse CIGAR if complement alignment
+    let cigar_to_process = if complement {
+        reverse_cigar(cigar)
+    } else {
+        cigar.to_string()
+    };
+    
+    let ops = cigar_str_to_cigar_ops(&cigar_to_process);
     let mut tracepoints = Vec::new();
     
     let mut a_pos = a_start;

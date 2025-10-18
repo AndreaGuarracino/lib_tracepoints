@@ -572,7 +572,7 @@ pub fn cigar_to_tracepoints_fastga(
                         len
                     }
                 }
-                'D' | 'N' => {
+                'D' => {
                     // Check segment length constraint
                     if (b_pos - last_b_pos) + len + (next_trace - a_pos) > 200 {
                         if a_pos != next_trace - trace_spacing {
@@ -588,7 +588,7 @@ pub fn cigar_to_tracepoints_fastga(
                     b_pos += len;
                     len // Consume all since D/N don't advance a_pos
                 }
-                'H' | 'S' | 'P' => len, // Skip special operations
+                'H' | 'N'  | 'S' | 'P' => len, // Skip special operations
                 _ => panic!("Invalid CIGAR operation: {op}"),
             };
             len -= consume;

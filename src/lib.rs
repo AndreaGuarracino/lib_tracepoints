@@ -1944,4 +1944,52 @@ mod tests {
             "Reconstructed CIGAR should not overconsume b_seq"
         );
     }
+
+    #[test]
+    fn test_fastga_tracepoints() {
+        // Test tracepoints from a real PAF comparison against the FASTGA reference.
+        let cigar = "15=1X5=1X4=1X1=1X92=1X27=1X4=1X11=1X2=1X17=1X1=1X36=1X7=1X12=1X1=1X1D2=1I7=1X9=1D1=1I1=2X6=1X1=1X39=1X31=1X4=1X39=1X31=1X120=1X27=1X43=1X11=1X13=27I6=1X13=1X16=1X12=1X87=1X8=1X39=2X7=1X74=1X39=1X56=1X34=1X21=1X76=1X17=1D128=1X116=1X4=1X37=1D20=1X2=1X18=1X25=1X84=1X95=1X108=4D42=1X9=1X74=1X1=1X159=1X91=1X7=1X2=1X41=1I102=2X9=1X49=1X4=1X14=1X23=1X37=2X53=1X39=2X16=1X30=1X8=1X130=1X41=1X38=1X122=1X107=1X7=1X71=1X169=1X14=1X18=1X59=1X21=1X10=1D1X113=1X36=1X2=1X70=1X16=1X34=1X136=1X68=1X6=1X98=1X38=1X37=1X65=1X237=1X46=1X26=1X8=1X218=1X51=1X172=1X137=1X1=1X12=1X107=1X26=1X112=3I13=1X9=1X2=1X77=1X75=1X14=1I119=1X9=1X20=1X7=1X1=1X40=5D20=1X4=1X7=2X47=1X27=1X53=1X220=1X4=1X8=1X66=1X195=1I33=1X27=1X29=1X111=1X74=1X2=1X47=1X21=1X113=1X44=1X5=1X3=1X2=1X122=1X208=1X18=1X136=2I52=11D7=1X26=1X85=1X47=1X27=1X12=1X43=1X4=1X30=1X41=1X98=1X88=1X183=1X185=1X18=1X51=1X44=1X31=1X47=1X48=3D3=1D105=1X162=1X1=1X97=1X3=1X55=1X72=1X6=1X53=1X12=1I4=1D31=1X91=1X45=1X84=1X6=1X78=1X78=1X13=1D7=1X23=1X20=1D2=1I25=1D1=1I5=1X41=1X41=1X26=1X4=2D1X6=1D2=1X10=1X8=1X1=1X3=2X12=1X12=1D1=1X1I21=1X9=2X34=1X5=1D1=1I1=1X8=1X11=1X5=1X20=1X2=1X62=2X4=1X6=1X22=1X5=1X5=1X30=1X8=1X3=1X1=1X1=1D1X2=1X2=1D1=1X1=1X1=1X2=1X1=1X2=1D9=1X3=2X1=2X2=2X2=1D2=1I4=1X25=1X5=1X17=1X2=1D1X3=1I8=1X69=1X2=1X20=1X44=1X38=1X35=1X56=1X8=1X8=1X111=1X2=3X1=1X3=3I8=1X1=4X8=1X1=1X6=1X3=1X3=1I10=1I10=1I90=1X7=1X3=1X6=1I11=1X7=1X1=2X5=1X1=2X3=9I6=1X1=1X2=1X6=1X10=1X28=1X11=1X14=1X7=1X68=1X5=1X25=1X2=1X1=1X12=1X5=1X23=1X64=1X5=1X62=1X15=1X2=2X3=3X9=1X4=1X5=1I2=1X3=1D2X3=1X7=1X6=1X10=3X11=1X87=1X4=1X26=1X3=1X1=1D2=1X4=1X6=1X2=1X1=1X6=2X22=1X20=1X20=1X6=1X14=1I3=1X1=1X6=1X16=1X3=4X3=1X5=1X1=2X3=2X4=1X12=1X1=2X2=2X4=1I4=1D2=1X1=1D1=1I22=1X4=1X6=1D1=2X2=1I7=1X8=1X7=1X2=1X4=1X58=1D1=1X1I21=1X27=1X40=2X3=1X25=1X2I6=1I2=1D9=2I1=3I7=1X3=1X47=1X1=2X1=1X16=1X13=7D15=1X14=1X1=1X6=1X17=1I3=1D14=1I3=1I3=1X7=2X9=1X6=1X13=1D1X5=1D2=2I2=1D3=1D1X1=1D1=1X1=1D1X6=3I6=2X1=1D1X1=1X3=1D1X8=1D2=1I16=1X10=1X3=1X10=2X1I4=1D22=2D1=1X9=1D7=1X1=1D3=1I9=4X1D4=1X5=1X5=5I12=1X4I4=1X5=1I1=1X10=1I7=1I2=1I18=1D2=1I6=";
+        let trace_spacing = 100;
+        let a_start = 0;
+        let b_start = 5207790;
+        let complement = true;
+
+        let expected_str = "20,88;18,103;28,103;16,105;13,96;8,97;6,100;19,100;18,99;12,101;2,100;21,100;2,100;6,100;4,100;20,91;6,99;16,94;4,100;4,100;2,100;3,100;17,100;17,103;6,100;10,100;15,103;5,100;6,101;1,100;2,100;2,100;1,100;5,100;1,100;2,100;2,100;1,100;4,104;2,100;2,100;2,100;0,100;1,100;0,100;2,100;1,100;3,100;3,100;2,100;14,109;0,100;2,100;0,100;1,100;4,100;1,100;2,100;3,100;0,100;4,99;0,100;1,100;3,100;0,100;1,100;2,100;11,105;3,100;2,99;1,100;6,97;2,100;0,100;3,100;1,100;0,100;2,100;0,100;1,100;3,100;0,100;0,100;2,100;2,100;2,100;1,100;1,100;3,100;2,100;4,101;3,100;0,100;1,100;2,100;1,100;2,100;1,100;2,100;4,100;4,100;5,100;1,99;3,100;1,100;2,100;2,100;4,104;1,100;2,100;4,101;2,100;1,100;2,101;2,100;2,100;4,100;2,100;30,73;4,100;0,100;4,100;10,100;9,100;2,100;4,50";
+
+        // Change the expected type to Vec<(usize, usize)>
+        let expected_tracepoints: Vec<(usize, usize)> = expected_str
+            .split(';')
+            .filter_map(|pair| {
+                let mut parts = pair.split(',');
+                if let (Some(x_str), Some(y_str)) = (parts.next(), parts.next()) {
+                    // Change parse::<i32>() to parse::<usize>()
+                    if let (Ok(x), Ok(y)) = (x_str.parse::<usize>(), y_str.parse::<usize>()) {
+                        return Some((x, y));
+                    }
+                }
+                None
+            })
+            .collect();
+        
+        let actual_tracepoints = cigar_to_tracepoints_fastga(cigar, trace_spacing, a_start, b_start, complement);
+
+        assert_eq!(
+            actual_tracepoints.len(),
+            expected_tracepoints.len(),
+            "The number of generated tracepoints ({}) does not match the expected number ({})",
+            actual_tracepoints.len(),
+            expected_tracepoints.len()
+        );
+
+        for (i, (actual, expected)) in actual_tracepoints.iter().zip(expected_tracepoints.iter()).enumerate() {
+            assert_eq!(
+                actual,
+                expected,
+                "Mismatch at tracepoint index {}: expected {:?}, but got {:?}",
+                i,
+                expected,
+                actual
+            );
+        }
+    }
 }

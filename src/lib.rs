@@ -488,10 +488,6 @@ fn reverse_cigar(cigar: &str) -> String {
 }
 
 /// Generate FASTGA-style tracepoints from CIGAR string
-///
-/// Creates tracepoints at regular intervals based on absolute query positions.
-/// Returns (diff_delta, b_length) pairs representing alignment segments.
-/// If `complement` is true, reverses the CIGAR string before processing.
 pub fn cigar_to_tracepoints_fastga(
     cigar: &str, 
     trace_spacing: usize,
@@ -499,7 +495,6 @@ pub fn cigar_to_tracepoints_fastga(
     b_start: usize,
     complement: bool,
 ) -> Vec<(usize, usize)> {
-    // Reverse CIGAR if complement alignment
     let cigar_to_process = if complement {
         reverse_cigar(cigar)
     } else {
@@ -514,23 +509,21 @@ pub fn cigar_to_tracepoints_fastga(
     let mut last_b_pos = b_start;
     let mut diff = 0i64;
     let mut last_diff = 0i64;
-    
-    // Calculate next trace boundary based on absolute position
     let mut next_trace = ((a_start / trace_spacing) + 1) * trace_spacing;
     
     for (mut len, op) in ops {
-        // Split operations at trace boundaries
         while len > 0 {
-            match op {
-                '=' | 'M' => {
-                    // Calculate how much of this operation fits before next boundary
-                    while len > 0 && a_pos + len > next_trace {
+            let consume = match op {
+                '=' | 'M' | 'X' => {
+                    // Check if this operation crosses a boundary
+                    if a_pos + len > next_trace {
                         let inc = next_trace - a_pos;
-                        a_pos += inc;
+                        a_pos = next_trace;
                         b_pos += inc;
-                        len -= inc;
-                        
-                        // Emit tracepoint at boundary
+                        if op == 'X' {
+                            diff += inc as i64;
+                        }
+                        // Emit tracepoint at boundary crossing
                         tracepoints.push((
                             (diff - last_diff).unsigned_abs() as usize,
                             b_pos - last_b_pos,
@@ -538,65 +531,33 @@ pub fn cigar_to_tracepoints_fastga(
                         last_diff = diff;
                         last_b_pos = b_pos;
                         next_trace += trace_spacing;
-                    }
-                    
-                    // Process remaining part
-                    if len > 0 {
+                        inc
+                    } else {
+                        // Operation fits entirely before next boundary
                         a_pos += len;
                         b_pos += len;
-                        len = 0;
-                    }
-                }
-                'X' => {
-                    // Split mismatches at boundaries
-                    while len > 0 && a_pos + len > next_trace {
-                        let inc = next_trace - a_pos;
-                        a_pos += inc;
-                        b_pos += inc;
-                        diff += inc as i64;
-                        len -= inc;
-                        
-                        // Emit tracepoint at boundary
-                        tracepoints.push((
-                            (diff - last_diff).unsigned_abs() as usize,
-                            b_pos - last_b_pos,
-                        ));
-                        last_diff = diff;
-                        last_b_pos = b_pos;
-                        next_trace += trace_spacing;
-                    }
-                    
-                    // Process remaining part
-                    if len > 0 {
-                        diff += len as i64;
-                        a_pos += len;
-                        b_pos += len;
-                        len = 0;
+                        if op == 'X' {
+                            diff += len as i64;
+                        }
+                        len
                     }
                 }
                 'I' => {
-                    // Check if segment would be too long (>200bp)
-                    if trace_spacing + len > 200 {
-                        // Force a tracepoint before this large insertion
-                        if a_pos > next_trace - trace_spacing {
-                            tracepoints.push((
-                                (diff - last_diff).unsigned_abs() as usize,
-                                b_pos - last_b_pos,
-                            ));
-                            last_diff = diff;
-                            last_b_pos = b_pos;
-                            next_trace = ((a_pos / trace_spacing) + 1) * trace_spacing;
-                        }
+                    // Check segment length constraint
+                    if trace_spacing + len > 200 && a_pos != next_trace - trace_spacing {
+                        tracepoints.push((
+                            (diff - last_diff).unsigned_abs() as usize,
+                            b_pos - last_b_pos,
+                        ));
+                        last_diff = diff;
+                        last_b_pos = b_pos;
+                        next_trace = ((a_pos / trace_spacing) + 1) * trace_spacing;
                     }
                     
-                    // Split insertions at boundaries
-                    while len > 0 && a_pos + len > next_trace {
+                    if a_pos + len > next_trace {
                         let inc = next_trace - a_pos;
-                        a_pos += inc;
+                        a_pos = next_trace;
                         diff += inc as i64;
-                        len -= inc;
-                        
-                        // Emit tracepoint at boundary
                         tracepoints.push((
                             (diff - last_diff).unsigned_abs() as usize,
                             b_pos - last_b_pos,
@@ -604,20 +565,17 @@ pub fn cigar_to_tracepoints_fastga(
                         last_diff = diff;
                         last_b_pos = b_pos;
                         next_trace += trace_spacing;
-                    }
-                    
-                    // Process remaining part
-                    if len > 0 {
-                        diff += len as i64;
+                        inc
+                    } else {
                         a_pos += len;
-                        len = 0;
+                        diff += len as i64;
+                        len
                     }
                 }
                 'D' | 'N' => {
-                    // Check if segment would be too long
+                    // Check segment length constraint
                     if (b_pos - last_b_pos) + len + (next_trace - a_pos) > 200 {
-                        // Force a tracepoint
-                        if a_pos > next_trace - trace_spacing {
+                        if a_pos != next_trace - trace_spacing {
                             tracepoints.push((
                                 (diff - last_diff).unsigned_abs() as usize,
                                 b_pos - last_b_pos,
@@ -626,22 +584,18 @@ pub fn cigar_to_tracepoints_fastga(
                             last_b_pos = b_pos;
                         }
                     }
-                    
-                    // Deletions don't advance a_pos but do advance b_pos
                     diff += len as i64;
                     b_pos += len;
-                    len = 0;
+                    len // Consume all since D/N don't advance a_pos
                 }
-                'H' | 'S' | 'P' => {
-                    // Skip special operations
-                    len = 0;
-                }
+                'H' | 'S' | 'P' => len, // Skip special operations
                 _ => panic!("Invalid CIGAR operation: {op}"),
-            }
+            };
+            len -= consume;
         }
     }
     
-    // Add final tracepoint if we've moved past the last boundary
+    // Add final tracepoint if we've passed the last boundary
     if a_pos > next_trace - trace_spacing {
         tracepoints.push((
             (diff - last_diff).unsigned_abs() as usize,

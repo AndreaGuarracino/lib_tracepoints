@@ -519,23 +519,60 @@ pub fn cigar_to_tracepoints_fastga(
     let mut next_trace = ((a_start / trace_spacing) + 1) * trace_spacing;
     
     for (mut len, op) in ops {
+        // Split operations at trace boundaries
         while len > 0 {
-            let remaining_to_trace = next_trace.saturating_sub(a_pos);
-            
-            // Determine how much to consume based on operation type
-            let consume = match op {
+            match op {
                 '=' | 'M' => {
-                    let step = len.min(remaining_to_trace);
-                    a_pos += step;
-                    b_pos += step;
-                    step
+                    // Calculate how much of this operation fits before next boundary
+                    while len > 0 && a_pos + len > next_trace {
+                        let inc = next_trace - a_pos;
+                        a_pos += inc;
+                        b_pos += inc;
+                        len -= inc;
+                        
+                        // Emit tracepoint at boundary
+                        tracepoints.push((
+                            (diff - last_diff).unsigned_abs() as usize,
+                            b_pos - last_b_pos,
+                        ));
+                        last_diff = diff;
+                        last_b_pos = b_pos;
+                        next_trace += trace_spacing;
+                    }
+                    
+                    // Process remaining part
+                    if len > 0 {
+                        a_pos += len;
+                        b_pos += len;
+                        len = 0;
+                    }
                 }
                 'X' => {
-                    let step = len.min(remaining_to_trace);
-                    diff += step as i64;
-                    a_pos += step;
-                    b_pos += step;
-                    step
+                    // Split mismatches at boundaries
+                    while len > 0 && a_pos + len > next_trace {
+                        let inc = next_trace - a_pos;
+                        a_pos += inc;
+                        b_pos += inc;
+                        diff += inc as i64;
+                        len -= inc;
+                        
+                        // Emit tracepoint at boundary
+                        tracepoints.push((
+                            (diff - last_diff).unsigned_abs() as usize,
+                            b_pos - last_b_pos,
+                        ));
+                        last_diff = diff;
+                        last_b_pos = b_pos;
+                        next_trace += trace_spacing;
+                    }
+                    
+                    // Process remaining part
+                    if len > 0 {
+                        diff += len as i64;
+                        a_pos += len;
+                        b_pos += len;
+                        len = 0;
+                    }
                 }
                 'I' => {
                     // Check if segment would be too long (>200bp)
@@ -552,10 +589,29 @@ pub fn cigar_to_tracepoints_fastga(
                         }
                     }
                     
-                    let step = len.min(remaining_to_trace);
-                    diff += step as i64;
-                    a_pos += step;
-                    step
+                    // Split insertions at boundaries
+                    while len > 0 && a_pos + len > next_trace {
+                        let inc = next_trace - a_pos;
+                        a_pos += inc;
+                        diff += inc as i64;
+                        len -= inc;
+                        
+                        // Emit tracepoint at boundary
+                        tracepoints.push((
+                            (diff - last_diff).unsigned_abs() as usize,
+                            b_pos - last_b_pos,
+                        ));
+                        last_diff = diff;
+                        last_b_pos = b_pos;
+                        next_trace += trace_spacing;
+                    }
+                    
+                    // Process remaining part
+                    if len > 0 {
+                        diff += len as i64;
+                        a_pos += len;
+                        len = 0;
+                    }
                 }
                 'D' | 'N' => {
                     // Check if segment would be too long
@@ -571,28 +627,16 @@ pub fn cigar_to_tracepoints_fastga(
                         }
                     }
                     
+                    // Deletions don't advance a_pos but do advance b_pos
                     diff += len as i64;
                     b_pos += len;
-                    len // Consume all since it doesn't affect a_pos
+                    len = 0;
                 }
                 'H' | 'S' | 'P' => {
                     // Skip special operations
-                    len
+                    len = 0;
                 }
                 _ => panic!("Invalid CIGAR operation: {op}"),
-            };
-            
-            len -= consume;
-            
-            // Check if we've reached a trace boundary
-            if a_pos >= next_trace {
-                tracepoints.push((
-                    (diff - last_diff).unsigned_abs() as usize,
-                    b_pos - last_b_pos,
-                ));
-                last_diff = diff;
-                last_b_pos = b_pos;
-                next_trace += trace_spacing;
             }
         }
     }

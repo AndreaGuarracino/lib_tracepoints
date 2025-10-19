@@ -878,7 +878,7 @@ pub fn variable_tracepoints_to_cigar_diagonal_with_aligner(
 ///
 /// Uses edit distance internally for alignment.
 pub fn tracepoints_to_cigar_fastga(
-    tracepoints: &[(usize, usize)],
+    segments: &[(usize, usize)],
     trace_spacing: usize,
     a_seq: &[u8],
     b_seq: &[u8],
@@ -893,13 +893,13 @@ pub fn tracepoints_to_cigar_fastga(
     
     let mut aligner = distance_mode.create_aligner();
     let mut cigar_ops = Vec::new();
-    let mut current_a = 0;  // Indices into the sequences (not absolute positions)
+    let mut current_a = 0;
     let mut current_b = 0;
     
     // Calculate first segment length based on starting position
     let first_segment_a_len = trace_spacing - (a_start % trace_spacing);
     
-    for (i, &(_, b_len)) in tracepoints.iter().enumerate() {
+    for (i, &(_, b_len)) in segments.iter().enumerate() {
         // Determine a_length for this segment
         let a_len = if i == 0 {
             first_segment_a_len

@@ -475,41 +475,34 @@ pub fn cigar_to_variable_tracepoints_diagonal(
     to_variable_format(cigar_to_tracepoints_diagonal(cigar, max_diff))
 }
 
-/// Reverse a CIGAR string for complement alignments
-/// 
-/// Reverses both the order of operations and the numbers within each operation.
-/// For example: "3M2I5D" becomes "5D2I3M"
-fn reverse_cigar(cigar: &str) -> String {
-    let ops = cigar_str_to_cigar_ops(cigar);
-    ops.iter()
-        .rev()
-        .map(|(len, op)| format!("{}{}", len, op))
-        .collect()
-}
-
 /// Generate FASTGA-style tracepoints from CIGAR string
 pub fn cigar_to_tracepoints_fastga(
     cigar: &str, 
     trace_spacing: usize,
-    a_start: usize,
-    b_start: usize,
+    query_start: usize,
+    _query_end: usize,
+    _query_len: usize,
+    target_start: usize,
+    target_end: usize,
+    target_len: usize,
     complement: bool,
 ) -> Vec<(usize, usize)> {
-    let cigar_to_process = if complement {
-        reverse_cigar(cigar)
+    // FASTGA reverses the target coordinates and CIGAR for complement alignments
+    let (target_start, _target_end, cigar) = if complement {
+        (target_len - target_end, target_len - target_start, reverse_cigar(cigar))
     } else {
-        cigar.to_string()
+        (target_start, target_end, cigar.to_string())
     };
     
-    let ops = cigar_str_to_cigar_ops(&cigar_to_process);
+    let ops = cigar_str_to_cigar_ops(&cigar);
     let mut tracepoints = Vec::new();
     
-    let mut a_pos = a_start;
-    let mut b_pos = b_start;
-    let mut last_b_pos = b_start;
+    let mut a_pos = query_start;
+    let mut b_pos = target_start;
+    let mut last_b_pos = target_start;
     let mut diff = 0i64;
     let mut last_diff = 0i64;
-    let mut next_trace = ((a_start / trace_spacing) + 1) * trace_spacing;
+    let mut next_trace = ((query_start / trace_spacing) + 1) * trace_spacing;
     
     for (mut len, op) in ops {
         while len > 0 {
@@ -604,6 +597,16 @@ pub fn cigar_to_tracepoints_fastga(
     }
     
     tracepoints
+}
+
+/// Reverse a CIGAR string by reversing the order of its operations
+/// For example: "3M2I5D" becomes "5D2I3M"
+fn reverse_cigar(cigar: &str) -> String {
+    let ops = cigar_str_to_cigar_ops(cigar);
+    ops.iter()
+        .rev()
+        .map(|(len, op)| format!("{}{}", len, op))
+        .collect()
 }
 
 /// Create an aligner with the given distance mode
@@ -884,6 +887,7 @@ pub fn tracepoints_to_cigar_fastga(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
+    complement: bool,
 ) -> String {
     // Use edit distance mode as FASTGA does
     let distance_mode = DistanceMode::Edit {
@@ -893,18 +897,23 @@ pub fn tracepoints_to_cigar_fastga(
     
     let mut aligner = distance_mode.create_aligner();
     let mut cigar_ops = Vec::new();
-    let mut current_a = 0;
-    let mut current_b = 0;
     
-    // Calculate first segment length based on starting position
-    let first_segment_a_len = trace_spacing - (a_start % trace_spacing);
+    // Starting positions in the sequences
+    let mut current_a = a_start;
+    let mut current_b = b_start;
     
-    for (i, &(_, b_len)) in segments.iter().enumerate() {
-        // Determine a_length for this segment
+    // Calculate the first trace boundary
+    let first_boundary = ((a_start / trace_spacing) + 1) * trace_spacing - a_start;
+    
+    // Process each segment
+    for (i, &(_diff, b_len)) in segments.iter().enumerate() {
+        // Calculate the query segment end
         let a_len = if i == 0 {
-            first_segment_a_len
+            // First segment: from start to first boundary
+            first_boundary.min(a_seq.len() - current_a)
         } else {
-            trace_spacing
+            // Subsequent segments: one trace_spacing worth
+            trace_spacing.min(a_seq.len() - current_a)
         };
         
         // Calculate segment boundaries
@@ -921,7 +930,7 @@ pub fn tracepoints_to_cigar_fastga(
             let seg_ops = align_sequences_wfa(
                 &a_seq[current_a..a_end],
                 &b_seq[current_b..b_end],
-                &mut aligner,
+                &mut aligner
             );
             cigar_ops.extend(seg_ops);
         }
@@ -930,8 +939,29 @@ pub fn tracepoints_to_cigar_fastga(
         current_b = b_end;
     }
     
+    // Handle any remaining bases
+    if current_a < a_seq.len() && current_b < b_seq.len() {
+        let seg_ops = align_sequences_wfa(
+            &a_seq[current_a..],
+            &b_seq[current_b..],
+            &mut aligner
+        );
+        cigar_ops.extend(seg_ops);
+    } else if current_a < a_seq.len() {
+        // Remaining query bases are insertions
+        cigar_ops.push((a_seq.len() - current_a, 'I'));
+    } else if current_b < b_seq.len() {
+        // Remaining target bases are deletions
+        cigar_ops.push((b_seq.len() - current_b, 'D'));
+    }
+    
     merge_cigar_ops(&mut cigar_ops);
-    cigar_ops_to_cigar_string(&cigar_ops)
+    let cigar = cigar_ops_to_cigar_string(&cigar_ops);
+    if complement {
+        reverse_cigar(&cigar)
+    } else {
+        cigar
+    }
 }
 
 // Helper functions

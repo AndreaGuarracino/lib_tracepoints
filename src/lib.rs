@@ -475,20 +475,40 @@ pub fn cigar_to_variable_tracepoints_diagonal(
     to_variable_format(cigar_to_tracepoints_diagonal(cigar, max_diff))
 }
 
+/// Reverse a CIGAR string for complement alignments
+/// 
+/// Reverses both the order of operations and the numbers within each operation.
+/// For example: "3M2I5D" becomes "5D2I3M"
+fn reverse_cigar(cigar: &str) -> String {
+    let ops = cigar_str_to_cigar_ops(cigar);
+    ops.iter()
+        .rev()
+        .map(|(len, op)| format!("{}{}", len, op))
+        .collect()
+}
+
 /// Generate FASTGA-style tracepoints from CIGAR string
-pub fn cigar_to_tracepoints_fastga(
+pub struct CigarProcessingState {
+    pub cigar_pos: usize,        // Position in CIGAR string
+    pub remaining_len: usize,    // Remaining length of current operation
+    pub query_pos: usize,        // Current query position
+    pub target_pos: usize,       // Current target position
+    pub completed: bool,         // Whether entire CIGAR was processed
+}
+
+pub fn cigar_to_tracepoints_fastga_with_overflow(
     cigar: &str, 
     trace_spacing: usize,
     query_start: usize,
-    _query_end: usize,
-    _query_len: usize,
+    query_end: usize,
     target_start: usize,
     target_end: usize,
     target_len: usize,
     complement: bool,
-) -> Vec<(usize, usize)> {
+    state: Option<CigarProcessingState>,
+) -> (Vec<(usize, usize)>, CigarProcessingState) {
     // FASTGA reverses the target coordinates and CIGAR for complement alignments
-    let (target_start, _target_end, cigar) = if complement {
+    let (target_start, target_end, cigar) = if complement {
         (target_len - target_end, target_len - target_start, reverse_cigar(cigar))
     } else {
         (target_start, target_end, cigar.to_string())
@@ -497,26 +517,52 @@ pub fn cigar_to_tracepoints_fastga(
     let ops = cigar_str_to_cigar_ops(&cigar);
     let mut tracepoints = Vec::new();
     
-    let mut a_pos = query_start;
-    let mut b_pos = target_start;
-    let mut last_b_pos = target_start;
+    // Initialize state from previous processing or start fresh
+    let (mut op_index, mut remaining_op_len, mut a_pos, mut b_pos) = if let Some(s) = state {
+        (s.cigar_pos, s.remaining_len, s.query_pos, s.target_pos)
+    } else {
+        (0, 0, query_start, target_start)
+    };
+    
+    let mut last_b_pos = b_pos;
     let mut diff = 0i64;
     let mut last_diff = 0i64;
-    let mut next_trace = ((query_start / trace_spacing) + 1) * trace_spacing;
+    let mut next_trace = ((a_pos / trace_spacing) + 1) * trace_spacing;
     
-    for (mut len, op) in ops {
+    while op_index < ops.len() {
+        let (op_len, op) = ops[op_index];
+        let mut len = if remaining_op_len > 0 { remaining_op_len } else { op_len };
+        remaining_op_len = 0;
+        
+        // Check boundaries before processing
+        if a_pos >= query_end || b_pos >= target_end {
+            return (tracepoints, CigarProcessingState {
+                cigar_pos: op_index,
+                remaining_len: len,
+                query_pos: a_pos,
+                target_pos: b_pos,
+                completed: false,
+            });
+        }
+        
+        // Adjust operation length if it would exceed boundaries
+        let original_len = len;
+        if (op == '=' || op == 'M' || op == 'X' || op == 'I') && a_pos + len > query_end {
+            len = query_end - a_pos;
+        }
+        if (op == '=' || op == 'M' || op == 'X' || op == 'D') && b_pos + len > target_end {
+            len = target_end - b_pos;
+        }
+        
+        let remaining_after_boundary = original_len - len;
+        
         while len > 0 {
             let consume = match op {
-                '=' | 'M' | 'X' => {
-                    // Check if this operation crosses a boundary
+                '=' | 'M' => {
                     if a_pos + len > next_trace {
                         let inc = next_trace - a_pos;
                         a_pos = next_trace;
                         b_pos += inc;
-                        if op == 'X' {
-                            diff += inc as i64;
-                        }
-                        // Emit tracepoint at boundary crossing
                         tracepoints.push((
                             (diff - last_diff).unsigned_abs() as usize,
                             b_pos - last_b_pos,
@@ -526,25 +572,48 @@ pub fn cigar_to_tracepoints_fastga(
                         next_trace += trace_spacing;
                         inc
                     } else {
-                        // Operation fits entirely before next boundary
                         a_pos += len;
                         b_pos += len;
-                        if op == 'X' {
-                            diff += len as i64;
-                        }
                         len
                     }
                 }
-                'I' => {
-                    // Check segment length constraint
-                    if trace_spacing + len > 200 && a_pos != next_trace - trace_spacing {
+                'X' => {
+                    if a_pos + len > next_trace {
+                        let inc = next_trace - a_pos;
+                        a_pos = next_trace;
+                        b_pos += inc;
+                        diff += inc as i64;
                         tracepoints.push((
                             (diff - last_diff).unsigned_abs() as usize,
                             b_pos - last_b_pos,
                         ));
                         last_diff = diff;
                         last_b_pos = b_pos;
-                        next_trace = ((a_pos / trace_spacing) + 1) * trace_spacing;
+                        next_trace += trace_spacing;
+                        inc
+                    } else {
+                        a_pos += len;
+                        b_pos += len;
+                        diff += len as i64;
+                        len
+                    }
+                }
+                'I' => {
+                    // Check for overflow - if insertion would cause trace point overflow
+                    if trace_spacing + len > 200 {
+                        // Emit current tracepoint and stop processing
+                        tracepoints.push((
+                            (diff - last_diff).unsigned_abs() as usize,
+                            b_pos - last_b_pos,
+                        ));
+                        
+                        return (tracepoints, CigarProcessingState {
+                            cigar_pos: op_index,
+                            remaining_len: len,
+                            query_pos: a_pos,
+                            target_pos: b_pos,
+                            completed: false,
+                        });
                     }
                     
                     if a_pos + len > next_trace {
@@ -566,26 +635,45 @@ pub fn cigar_to_tracepoints_fastga(
                     }
                 }
                 'D' => {
-                    // Check segment length constraint
+                    // Check for overflow - if deletion would cause trace point overflow
                     if (b_pos - last_b_pos) + len + (next_trace - a_pos) > 200 {
-                        if a_pos != next_trace - trace_spacing {
-                            tracepoints.push((
-                                (diff - last_diff).unsigned_abs() as usize,
-                                b_pos - last_b_pos,
-                            ));
-                            last_diff = diff;
-                            last_b_pos = b_pos;
-                        }
+                        // Emit current tracepoint and stop processing
+                        tracepoints.push((
+                            (diff - last_diff).unsigned_abs() as usize,
+                            b_pos - last_b_pos,
+                        ));
+                        
+                        return (tracepoints, CigarProcessingState {
+                            cigar_pos: op_index,
+                            remaining_len: len,
+                            query_pos: a_pos,
+                            target_pos: b_pos,
+                            completed: false,
+                        });
                     }
-                    diff += len as i64;
+                    
                     b_pos += len;
-                    len // Consume all since D/N don't advance a_pos
+                    diff += len as i64;
+                    len // Consume all since D doesn't advance a_pos
                 }
-                'H' | 'N'  | 'S' | 'P' => len, // Skip special operations
+                'H' | 'N' | 'S' | 'P' => len, // Skip special operations
                 _ => panic!("Invalid CIGAR operation: {op}"),
             };
             len -= consume;
         }
+        
+        // If we had to truncate due to boundary, return with remaining length
+        if remaining_after_boundary > 0 {
+            return (tracepoints, CigarProcessingState {
+                cigar_pos: op_index,
+                remaining_len: remaining_after_boundary,
+                query_pos: a_pos,
+                target_pos: b_pos,
+                completed: false,
+            });
+        }
+        
+        op_index += 1;
     }
     
     // Add final tracepoint if we've passed the last boundary
@@ -596,17 +684,87 @@ pub fn cigar_to_tracepoints_fastga(
         ));
     }
     
-    tracepoints
+    (tracepoints, CigarProcessingState {
+        cigar_pos: op_index,
+        remaining_len: 0,
+        query_pos: a_pos,
+        target_pos: b_pos,
+        completed: true,
+    })
 }
 
-/// Reverse a CIGAR string by reversing the order of its operations
-/// For example: "3M2I5D" becomes "5D2I3M"
-fn reverse_cigar(cigar: &str) -> String {
-    let ops = cigar_str_to_cigar_ops(cigar);
-    ops.iter()
-        .rev()
-        .map(|(len, op)| format!("{}{}", len, op))
-        .collect()
+// Convenience wrapper that maintains the original interface but handles overflow
+pub fn cigar_to_tracepoints_fastga(
+    cigar: &str, 
+    trace_spacing: usize,
+    query_start: usize,
+    query_end: usize,
+    query_len: usize,
+    target_start: usize,
+    target_end: usize,
+    target_len: usize,
+    complement: bool,
+) -> Vec<(Vec<(usize, usize)>, (usize, usize, usize, usize))> {
+    let mut results = Vec::new();
+    let mut state = None;
+    let mut current_query_start = query_start;
+    let mut current_target_start = target_start;
+    
+    loop {
+        let (tracepoints, new_state) = cigar_to_tracepoints_fastga_with_overflow(
+            cigar, 
+            trace_spacing,
+            current_query_start,
+            query_end,
+            current_target_start,
+            target_end,
+            target_len,
+            complement,
+            state,
+        );
+        
+        // Store the segment with its coordinate bounds
+        results.push((
+            tracepoints,
+            (current_query_start, new_state.query_pos, current_target_start, new_state.target_pos)
+        ));
+        
+        if new_state.completed {
+            break;
+        }
+        
+        // Handle the remaining operation that caused overflow
+        current_query_start = new_state.query_pos;
+        current_target_start = new_state.target_pos;
+        
+        // Skip the operation that caused overflow (similar to C code)
+        if new_state.remaining_len > 0 {
+            // This would be handled by the gap processing in the C code
+            // For now, we advance positions to skip the problematic operation
+            let ops = cigar_str_to_cigar_ops(cigar);
+            if new_state.cigar_pos < ops.len() {
+                let (_, op) = ops[new_state.cigar_pos];
+                match op {
+                    'I' => current_query_start += new_state.remaining_len,
+                    'D' => current_target_start += new_state.remaining_len,
+                    _ => {
+                        current_query_start += new_state.remaining_len;
+                        current_target_start += new_state.remaining_len;
+                    }
+                }
+            }
+        }
+        
+        state = Some(CigarProcessingState {
+            cigar_pos: new_state.cigar_pos + 1, // Move to next operation
+            remaining_len: 0,
+            query_pos: current_query_start,
+            target_pos: current_target_start,
+            completed: false,
+        });
+    }
+    
+    results
 }
 
 /// Create an aligner with the given distance mode

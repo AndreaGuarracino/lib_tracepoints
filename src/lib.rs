@@ -1238,6 +1238,132 @@ pub fn align_sequences_wfa(
     }
 }
 
+/// Convert pa_types::Cigar to our (length, operation) format
+///
+/// Converts from pa_types::Cigar (which contains CigarElem with CigarOp enum)
+/// to our standard Vec<(usize, char)> format for CIGAR string generation.
+pub fn cigar_from_pa_types(cigar: &pa_types::Cigar) -> Vec<(usize, char)> {
+    cigar.ops.iter().map(|elem| {
+        let op_char = match elem.op {
+            pa_types::CigarOp::Match => '=',
+            pa_types::CigarOp::Sub => 'X',
+            pa_types::CigarOp::Ins => 'I',
+            pa_types::CigarOp::Del => 'D',
+        };
+        (elem.cnt as usize, op_char)
+    }).collect()
+}
+
+/// Align two sequence segments using A*PA2 aligner and convert to our CIGAR format
+///
+/// Takes two byte sequences and an A*PA2 trait object aligner.
+/// Returns CIGAR operations in our standard (length, op) format.
+fn align_segments_astarpa(
+    a: &[u8],
+    b: &[u8],
+    aligner: &mut dyn astarpa2::AstarPa2StatsAligner,
+) -> Vec<(usize, char)> {
+    use pa_types::Aligner;
+
+    let a_pa: pa_types::Seq = a;
+    let b_pa: pa_types::Seq = b;
+    let (_cost, maybe_cigar) = aligner.align(b_pa, a_pa);
+
+    // Convert the A*PA2 Cigar to our (len, op) format
+    match maybe_cigar {
+        Some(cigar) => cigar_from_pa_types(&cigar),
+        None => {
+            // Fallback if no CIGAR returned
+            if a == b {
+                vec![(a.len(), '=')]
+            } else {
+                vec![(a.len(), 'X')]
+            }
+        }
+    }
+}
+
+/// Reconstruct CIGAR from FASTGA-style tracepoints with provided A*PA2 aligner
+///
+/// Takes an A*PA2 aligner trait object and uses it for segment alignment.
+pub fn tracepoints_to_cigar_fastga_with_aligner_astarpa(
+    segments: &[(usize, usize)],
+    trace_spacing: usize,
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    _b_start: usize,
+    complement: bool,
+    aligner: &mut dyn astarpa2::AstarPa2StatsAligner,
+) -> String {
+    let mut cigar_ops = Vec::new();
+
+    // Starting positions in the sequences
+    let mut current_a = 0;
+    let mut current_b = 0;
+
+    // Calculate the first trace boundary
+    let first_boundary = ((a_start / trace_spacing) + 1) * trace_spacing - a_start;
+
+    // Process each segment
+    for (i, &(_diff, b_len)) in segments.iter().enumerate() {
+        // Calculate the query segment end
+        let a_len = if i == 0 {
+            // First segment: from start to first boundary
+            first_boundary.min(a_seq.len() - current_a)
+        } else {
+            // Subsequent segments: one trace_spacing worth
+            trace_spacing.min(a_seq.len() - current_a)
+        };
+
+        // Calculate segment boundaries
+        let a_end = (current_a + a_len).min(a_seq.len());
+        let b_end = (current_b + b_len).min(b_seq.len());
+
+        // Skip if we've exhausted either sequence
+        if current_a >= a_seq.len() || current_b >= b_seq.len() {
+            break;
+        }
+
+        // Align this segment if it has content
+        if a_end > current_a && b_end > current_b {
+            let seg_ops = align_segments_astarpa(
+                &a_seq[current_a..a_end],
+                &b_seq[current_b..b_end],
+                aligner,
+            );
+            cigar_ops.extend(seg_ops);
+        }
+
+        current_a = a_end;
+        current_b = b_end;
+    }
+
+    // Handle any remaining bases
+    if current_a < a_seq.len() && current_b < b_seq.len() {
+        let seg_ops = align_segments_astarpa(
+            &a_seq[current_a..],
+            &b_seq[current_b..],
+            aligner,
+        );
+        cigar_ops.extend(seg_ops);
+    } else if current_a < a_seq.len() {
+        // Remaining query bases are insertions
+        cigar_ops.push((a_seq.len() - current_a, 'I'));
+    } else if current_b < b_seq.len() {
+        // Remaining target bases are deletions
+        cigar_ops.push((b_seq.len() - current_b, 'D'));
+    }
+
+    merge_cigar_ops(&mut cigar_ops);
+    let cigar = cigar_ops_to_cigar_string(&cigar_ops);
+    if complement {
+        reverse_cigar(&cigar)
+    } else {
+        cigar
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

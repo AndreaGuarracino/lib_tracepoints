@@ -3,9 +3,9 @@ use lib_tracepoints::{cigar_to_tracepoints, tracepoints_to_cigar, DistanceMode};
 fn main() {
     let cigar = "5=1I5=";
     let a_seq = b"ACGTACGTACG"; // 11 bases
-    let b_seq = b"ACGTAGTACG";  // 10 bases
+    let b_seq = b"ACGTAGTACG"; // 10 bases
 
-        // Convert to tracepoints with max 3 differences per segment
+    // Convert to tracepoints with max 3 differences per segment
     let tracepoints = cigar_to_tracepoints(cigar, 3);
 
     // Use edit distance mode (unit costs)

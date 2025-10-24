@@ -1151,8 +1151,6 @@ pub fn tracepoints_to_cigar_fastga_with_aligner(
             cigar_ops.extend(seg_ops);
             current_a = a_end;
             current_b = b_end;
-        } else {
-            eprintln!("Warning: Segment with zero length in both sequences encountered.");
         }
     }
 

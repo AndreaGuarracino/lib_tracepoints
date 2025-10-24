@@ -1118,7 +1118,7 @@ pub fn tracepoints_to_cigar_fastga_with_aligner(
     let first_boundary = ((a_start / trace_spacing) + 1) * trace_spacing - a_start;
 
     // Process each segment
-    for (i, &(_diff, b_len)) in segments.iter().enumerate() {
+    for (i, &(num_diff, b_len)) in segments.iter().enumerate() {
         // Calculate the query segment length
         let a_len = if i == 0 {
             // First segment: from start to first trace boundary
@@ -1142,13 +1142,18 @@ pub fn tracepoints_to_cigar_fastga_with_aligner(
             cigar_ops.push((a_end - current_a, 'I'));
             current_a = a_end;
         } else if a_end > current_a && b_end > current_b {
-            // Mixed segment - realign with WFA
-            let seg_ops = align_sequences_wfa(
-                &a_seq[current_a..a_end], 
-                &b_seq[current_b..b_end], 
-                aligner
-            );
-            cigar_ops.extend(seg_ops);
+            // If num_diff is zero and the lengths match, it's a perfect match segment
+            if num_diff == 0 && (a_end - current_a) == (b_end - current_b) {
+                cigar_ops.push((a_end - current_a, '='));
+            } else {
+                // Mixed segment - realign with WFA
+                let seg_ops = align_sequences_wfa(
+                    &a_seq[current_a..a_end],
+                    &b_seq[current_b..b_end],
+                    aligner,
+                );
+                cigar_ops.extend(seg_ops);
+            }
             current_a = a_end;
             current_b = b_end;
         }

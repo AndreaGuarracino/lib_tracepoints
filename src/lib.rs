@@ -722,7 +722,7 @@ pub fn cigar_to_tracepoints_fastga(
     trace_spacing: usize,
     query_start: usize,
     query_end: usize,
-    query_len: usize,
+    _query_len: usize,
     target_start: usize,
     target_end: usize,
     target_len: usize,
@@ -1118,10 +1118,10 @@ pub fn tracepoints_to_cigar_fastga_with_aligner(
     let first_boundary = ((a_start / trace_spacing) + 1) * trace_spacing - a_start;
 
     // Process each segment
-    for (i, &(_diff, b_len)) in segments.iter().enumerate() {
-        // Calculate the query segment end
+    for (i, &(num_diff, b_len)) in segments.iter().enumerate() {
+        // Calculate the query segment length
         let a_len = if i == 0 {
-            // First segment: from start to first boundary
+            // First segment: from start to first trace boundary
             first_boundary.min(a_seq.len() - current_a)
         } else {
             // Subsequent segments: one trace_spacing worth
@@ -1132,36 +1132,37 @@ pub fn tracepoints_to_cigar_fastga_with_aligner(
         let a_end = (current_a + a_len).min(a_seq.len());
         let b_end = (current_b + b_len).min(b_seq.len());
 
-        // Skip if we've exhausted either sequence
-        if current_a >= a_seq.len() || current_b >= b_seq.len() {
-            break;
+        // Handle pure insertions or deletions
+        if a_end == current_a && b_end > current_b {
+            // Pure deletion
+            cigar_ops.push((b_end - current_b, 'D'));
+            current_b = b_end;
+        } else if b_end == current_b && a_end > current_a {
+            // Pure insertion  
+            cigar_ops.push((a_end - current_a, 'I'));
+            current_a = a_end;
+        } else if a_end > current_a && b_end > current_b {
+            // If num_diff is zero and the lengths match, it's a perfect match segment
+            if num_diff == 0 && (a_end - current_a) == (b_end - current_b) {
+                cigar_ops.push((a_end - current_a, '='));
+            } else {
+                // Mixed segment - realign with WFA
+                let seg_ops = align_sequences_wfa(
+                    &a_seq[current_a..a_end],
+                    &b_seq[current_b..b_end],
+                    aligner,
+                );
+                cigar_ops.extend(seg_ops);
+            }
+            current_a = a_end;
+            current_b = b_end;
         }
-
-        // Align this segment if it has content
-        if a_end > current_a && b_end > current_b {
-            let seg_ops =
-                align_sequences_wfa(&a_seq[current_a..a_end], &b_seq[current_b..b_end], aligner);
-            cigar_ops.extend(seg_ops);
-        }
-
-        current_a = a_end;
-        current_b = b_end;
-    }
-
-    // Handle any remaining bases
-    if current_a < a_seq.len() && current_b < b_seq.len() {
-        let seg_ops = align_sequences_wfa(&a_seq[current_a..], &b_seq[current_b..], aligner);
-        cigar_ops.extend(seg_ops);
-    } else if current_a < a_seq.len() {
-        // Remaining query bases are insertions
-        cigar_ops.push((a_seq.len() - current_a, 'I'));
-    } else if current_b < b_seq.len() {
-        // Remaining target bases are deletions
-        cigar_ops.push((b_seq.len() - current_b, 'D'));
     }
 
     merge_cigar_ops(&mut cigar_ops);
     let cigar = cigar_ops_to_cigar_string(&cigar_ops);
+    
+    // Reverse CIGAR for complement alignments
     if complement {
         reverse_cigar(&cigar)
     } else {

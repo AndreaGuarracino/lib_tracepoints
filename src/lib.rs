@@ -1114,30 +1114,19 @@ pub fn tracepoints_to_cigar_fastga_with_aligner(
     let mut current_a = 0;
     let mut current_b = 0;
 
-    eprintln!(
-        "Reconstructing CIGAR from FASTGA tracepoints: a_start={}, trace_spacing={}",
-        a_start, trace_spacing
-    );
     // Calculate the first trace boundary
     let first_boundary = ((a_start / trace_spacing) + 1) * trace_spacing - a_start;
 
     // Process each segment
     for (i, &(_diff, b_len)) in segments.iter().enumerate() {
-        eprintln!("Processing segment {}: diff={} b_len={}", i, _diff, b_len);
         // Calculate the query segment length
         let a_len = if i == 0 {
-            eprintln!("First segment, using first boundary: {}", first_boundary);
-            eprintln!(
-                "Remaining a_seq length: {}",
-                a_seq.len() - current_a
-            );
             // First segment: from start to first trace boundary
             first_boundary.min(a_seq.len() - current_a)
         } else {
             // Subsequent segments: one trace_spacing worth
             trace_spacing.min(a_seq.len() - current_a)
         };
-        eprintln!("Calculated a_len: {}", a_len);
 
         // Calculate segment boundaries
         let a_end = (current_a + a_len).min(a_seq.len());

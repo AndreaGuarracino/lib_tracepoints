@@ -1,44 +1,6 @@
 pub use lib_wfa2::affine_wavefront::{AffineWavefronts, AlignmentStatus, Distance};
 use std::cmp::min;
 
-/// Extension trait for Distance to create aligners
-pub trait DistanceExt {
-    /// Create an aligner configured for this distance mode
-    fn create_aligner(&self) -> AffineWavefronts;
-}
-
-impl DistanceExt for Distance {
-    fn create_aligner(&self) -> AffineWavefronts {
-        match self {
-            Distance::Edit => AffineWavefronts::new_aligner_edit(None),
-            Distance::GapAffine {
-                mismatch,
-                gap_opening,
-                gap_extension,
-            } => AffineWavefronts::new_aligner_gap_affine(
-                *mismatch,
-                *gap_opening,
-                *gap_extension,
-                None,
-            ),
-            Distance::GapAffine2p {
-                mismatch,
-                gap_opening1,
-                gap_extension1,
-                gap_opening2,
-                gap_extension2,
-            } => AffineWavefronts::new_aligner_gap_affine2p(
-                *mismatch,
-                *gap_opening1,
-                *gap_extension1,
-                *gap_opening2,
-                *gap_extension2,
-                None,
-            ),
-        }
-    }
-}
-
 /// Output type for tracepoint processing
 enum Tracepoints {
     /// Standard tracepoints as (a_len, b_len) pairs
@@ -167,7 +129,7 @@ pub fn mixed_tracepoints_to_cigar(
     b_start: usize,
     distance_mode: &Distance,
 ) -> String {
-    let mut aligner = distance_mode.create_aligner();
+    let mut aligner = distance_mode.create_aligner(None);
     let mut cigar_ops = Vec::new();
     let mut current_a = a_start;
     let mut current_b = b_start;
@@ -627,7 +589,7 @@ fn reconstruct_cigar_from_segments(
     b_start: usize,
     distance_mode: &Distance,
 ) -> String {
-    let mut aligner = distance_mode.create_aligner();
+    let mut aligner = distance_mode.create_aligner(None);
     reconstruct_cigar_from_segments_with_aligner(
         segments,
         a_seq,
@@ -1149,7 +1111,7 @@ pub fn tracepoints_to_cigar_fastga(
     // Use edit distance mode as FASTGA does
     let distance_mode = Distance::Edit;
 
-    let mut aligner = distance_mode.create_aligner();
+    let mut aligner = distance_mode.create_aligner(None);
     tracepoints_to_cigar_fastga_with_aligner(
         segments,
         trace_spacing,
@@ -1605,8 +1567,14 @@ mod tests {
         // Create variable tracepoints
         let variable_tracepoints = cigar_to_variable_tracepoints(original_cigar, max_diff);
 
-        // Create an aligner
-        let mut aligner = AffineWavefronts::new_aligner_gap_affine2p(2, 4, 2, 6, 1, None);
+        let distance = Distance::GapAffine2p {
+            mismatch: 2,
+            gap_opening1: 4,
+            gap_extension1: 2,
+            gap_opening2: 6,
+            gap_extension2: 1,
+        };
+        let mut aligner = distance.create_aligner(None);
 
         // Test the new function
         let reconstructed_cigar = variable_tracepoints_to_cigar_with_aligner(
@@ -1618,23 +1586,9 @@ mod tests {
             &mut aligner,
         );
 
-        let distance_mode = Distance::GapAffine2p {
-            mismatch: 2,
-            gap_opening1: 4,
-            gap_extension1: 2,
-            gap_opening2: 6,
-            gap_extension2: 1,
-        };
-
         // Should produce the same result
-        let expected_cigar = variable_tracepoints_to_cigar(
-            &variable_tracepoints,
-            a_seq,
-            b_seq,
-            0,
-            0,
-            &distance_mode,
-        );
+        let expected_cigar =
+            variable_tracepoints_to_cigar(&variable_tracepoints, a_seq, b_seq, 0, 0, &distance);
 
         assert_eq!(
             reconstructed_cigar, expected_cigar,
@@ -1656,14 +1610,8 @@ mod tests {
             &mut aligner,
         );
 
-        let expected_cigar2 = variable_tracepoints_to_cigar(
-            &variable_tracepoints2,
-            a_seq,
-            b_seq,
-            0,
-            0,
-            &distance_mode,
-        );
+        let expected_cigar2 =
+            variable_tracepoints_to_cigar(&variable_tracepoints2, a_seq, b_seq, 0, 0, &distance);
 
         assert_eq!(
             reconstructed_cigar2, expected_cigar2,

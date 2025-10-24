@@ -1,38 +1,40 @@
-use lib_wfa2::affine_wavefront::{AffineWavefronts, AlignmentStatus};
+pub use lib_wfa2::affine_wavefront::{AffineWavefronts, AlignmentStatus, Distance};
 use std::cmp::min;
 
-/// Distance mode for alignment
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DistanceMode {
-    /// Affine gap penalty with dual costs (gap_open1, gap_ext1, gap_open2, gap_ext2)
-    Affine2p {
-        mismatch: i32,
-        gap_open1: i32,
-        gap_ext1: i32,
-        gap_open2: i32,
-        gap_ext2: i32,
-    },
-    /// Edit distance (unit costs for mismatch and indels)
-    Edit { mismatch: i32, gap_opening: i32 },
+/// Extension trait for Distance to create aligners
+pub trait DistanceExt {
+    /// Create an aligner configured for this distance mode
+    fn create_aligner(&self) -> AffineWavefronts;
 }
 
-impl DistanceMode {
-    /// Create an aligner configured for this distance mode
-    pub fn create_aligner(&self) -> AffineWavefronts {
+impl DistanceExt for Distance {
+    fn create_aligner(&self) -> AffineWavefronts {
         match self {
-            DistanceMode::Affine2p {
-                mismatch,
-                gap_open1,
-                gap_ext1,
-                gap_open2,
-                gap_ext2,
-            } => AffineWavefronts::with_penalties_affine2p(
-                0, *mismatch, *gap_open1, *gap_ext1, *gap_open2, *gap_ext2,
-            ),
-            DistanceMode::Edit {
+            Distance::Edit => AffineWavefronts::new_aligner_edit(None),
+            Distance::GapAffine {
                 mismatch,
                 gap_opening,
-            } => AffineWavefronts::with_penalties_edit(0, *mismatch, *gap_opening),
+                gap_extension,
+            } => AffineWavefronts::new_aligner_gap_affine(
+                *mismatch,
+                *gap_opening,
+                *gap_extension,
+                None,
+            ),
+            Distance::GapAffine2p {
+                mismatch,
+                gap_opening1,
+                gap_extension1,
+                gap_opening2,
+                gap_extension2,
+            } => AffineWavefronts::new_aligner_gap_affine2p(
+                *mismatch,
+                *gap_opening1,
+                *gap_extension1,
+                *gap_opening2,
+                *gap_extension2,
+                None,
+            ),
         }
     }
 }
@@ -483,18 +485,18 @@ pub fn cigar_to_tracepoints_fastga(
 }
 
 /// Create an aligner with the given distance mode
-fn create_aligner(distance_mode: &DistanceMode) -> AffineWavefronts {
+fn create_aligner(distance_mode: &Distance) -> AffineWavefronts {
     distance_mode.create_aligner()
 }
 
-/// Reconstruct CIGAR string from tracepoint segments using WFA alignment with DistanceMode
+/// Reconstruct CIGAR string from tracepoint segments using WFA alignment with Distance
 fn reconstruct_cigar_from_segments(
     segments: &[(usize, usize)],
     a_seq: &[u8],
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance_mode: &DistanceMode,
+    distance_mode: &Distance,
 ) -> String {
     let mut aligner = create_aligner(distance_mode);
     reconstruct_cigar_from_segments_with_aligner(
@@ -546,14 +548,14 @@ fn reconstruct_cigar_from_segments_with_aligner(
     cigar_ops_to_cigar_string(&cigar_ops)
 }
 
-/// Reconstruct CIGAR string from standard tracepoints with DistanceMode
+/// Reconstruct CIGAR string from standard tracepoints with Distance
 pub fn tracepoints_to_cigar(
     tracepoints: &[(usize, usize)],
     a_seq: &[u8],
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance_mode: &DistanceMode,
+    distance_mode: &Distance,
 ) -> String {
     reconstruct_cigar_from_segments(tracepoints, a_seq, b_seq, a_start, b_start, distance_mode)
 }
@@ -567,7 +569,7 @@ pub fn mixed_tracepoints_to_cigar(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance_mode: &DistanceMode,
+    distance_mode: &Distance,
 ) -> String {
     let mut aligner = create_aligner(distance_mode);
     let mut cigar_ops = Vec::new();
@@ -626,7 +628,7 @@ pub fn variable_tracepoints_to_cigar(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance_mode: &DistanceMode,
+    distance_mode: &Distance,
 ) -> String {
     let regular_tracepoints = from_variable_format(variable_tracepoints);
     reconstruct_cigar_from_segments(
@@ -672,7 +674,7 @@ pub fn tracepoints_to_cigar_diagonal(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance_mode: &DistanceMode,
+    distance_mode: &Distance,
 ) -> String {
     // Diagonal tracepoints can be reconstructed the same way as regular tracepoints
     // since they represent the same (a_len, b_len) format
@@ -689,7 +691,7 @@ pub fn mixed_tracepoints_to_cigar_diagonal(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance_mode: &DistanceMode,
+    distance_mode: &Distance,
 ) -> String {
     // Mixed diagonal tracepoints can be reconstructed the same way as regular mixed tracepoints
     // since they use the same MixedRepresentation format
@@ -713,7 +715,7 @@ pub fn variable_tracepoints_to_cigar_diagonal(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance_mode: &DistanceMode,
+    distance_mode: &Distance,
 ) -> String {
     // Variable diagonal tracepoints can be reconstructed the same way as regular variable tracepoints
     // since they use the same (usize, Option<usize>) format
@@ -763,10 +765,7 @@ pub fn tracepoints_to_cigar_fastga(
     complement: bool,
 ) -> String {
     // Use edit distance mode as FASTGA does
-    let distance_mode = DistanceMode::Edit {
-        mismatch: 1,
-        gap_opening: 1,
-    };
+    let distance_mode = Distance::Edit;
 
     let mut aligner = distance_mode.create_aligner();
     tracepoints_to_cigar_fastga_with_aligner(
@@ -1301,21 +1300,21 @@ mod tests {
         let b_seq = b"AGTACGTACACGTACGTAC"; // 19 bases (missing C)
         let max_diff = 5;
 
-        let distance_mode = DistanceMode::Affine2p {
+        let distance_mode = Distance::GapAffine2p {
             mismatch: 2,
-            gap_open1: 4,
-            gap_ext1: 2,
-            gap_open2: 6,
-            gap_ext2: 1,
+            gap_opening1: 4,
+            gap_extension1: 2,
+            gap_opening2: 6,
+            gap_extension2: 1,
         };
 
-        // Test tracepoints roundtrip with DistanceMode API
+        // Test tracepoints roundtrip with Distance API
         let tracepoints = cigar_to_tracepoints(original_cigar, max_diff);
         let reconstructed_cigar =
             tracepoints_to_cigar(&tracepoints, a_seq, b_seq, 0, 0, &distance_mode);
         assert_eq!(
             reconstructed_cigar, original_cigar,
-            "Affine2p distance mode roundtrip failed"
+            "GapAffine2p distance mode roundtrip failed"
         );
     }
 
@@ -1326,10 +1325,7 @@ mod tests {
         let b_seq = b"AGTACGTACACGTACGTAC"; // 19 bases (missing C)
         let max_diff = 5;
 
-        let distance_mode = DistanceMode::Edit {
-            mismatch: 1,
-            gap_opening: 1,
-        };
+        let distance_mode = Distance::Edit;
 
         // Test tracepoints roundtrip with edit distance mode
         let tracepoints = cigar_to_tracepoints(original_cigar, max_diff);
@@ -1464,12 +1460,12 @@ mod tests {
             ),
         ];
 
-        let distance_mode = DistanceMode::Affine2p {
+        let distance_mode = Distance::GapAffine2p {
             mismatch,
-            gap_open1,
-            gap_ext1,
-            gap_open2,
-            gap_ext2,
+            gap_opening1: gap_open1,
+            gap_extension1: gap_ext1,
+            gap_opening2: gap_open2,
+            gap_extension2: gap_ext2,
         };
 
         for (i, (mixed_tracepoints, expected_cigar)) in test_cases.iter().enumerate() {
@@ -1498,12 +1494,12 @@ mod tests {
             MixedRepresentation::Tracepoint(4, 4),
         ];
 
-        let distance_mode = DistanceMode::Affine2p {
+        let distance_mode = Distance::GapAffine2p {
             mismatch: 2,
-            gap_open1: 4,
-            gap_ext1: 2,
-            gap_open2: 6,
-            gap_ext2: 1,
+            gap_opening1: 4,
+            gap_extension1: 2,
+            gap_opening2: 6,
+            gap_extension2: 1,
         };
         let result =
             mixed_tracepoints_to_cigar(&mixed_tracepoints, a_seq, b_seq, 0, 0, &distance_mode);
@@ -1595,12 +1591,12 @@ mod tests {
         let b_seq = b"AGTACGTACACGTACGTAC"; // 19 bases (missing C)
         let max_diff = 5;
 
-        let distance_mode = DistanceMode::Affine2p {
+        let distance_mode = Distance::GapAffine2p {
             mismatch: 2,
-            gap_open1: 4,
-            gap_ext1: 2,
-            gap_open2: 6,
-            gap_ext2: 1,
+            gap_opening1: 4,
+            gap_extension1: 2,
+            gap_opening2: 6,
+            gap_extension2: 1,
         };
 
         // Test variable tracepoints roundtrip
@@ -1631,7 +1627,7 @@ mod tests {
         let variable_tracepoints = cigar_to_variable_tracepoints(original_cigar, max_diff);
 
         // Create an aligner
-        let mut aligner = AffineWavefronts::with_penalties_affine2p(0, 2, 4, 2, 6, 1);
+        let mut aligner = AffineWavefronts::new_aligner_gap_affine2p(2, 4, 2, 6, 1, None);
 
         // Test the new function
         let reconstructed_cigar = variable_tracepoints_to_cigar_with_aligner(
@@ -1643,12 +1639,12 @@ mod tests {
             &mut aligner,
         );
 
-        let distance_mode = DistanceMode::Affine2p {
+        let distance_mode = Distance::GapAffine2p {
             mismatch: 2,
-            gap_open1: 4,
-            gap_ext1: 2,
-            gap_open2: 6,
-            gap_ext2: 1,
+            gap_opening1: 4,
+            gap_extension1: 2,
+            gap_opening2: 6,
+            gap_extension2: 1,
         };
 
         // Should produce the same result
@@ -1827,12 +1823,12 @@ mod tests {
         let b_seq = b"ACCGTCGAA"; // 9 bases
         let max_diff = 2;
 
-        let distance_mode = DistanceMode::Affine2p {
+        let distance_mode = Distance::GapAffine2p {
             mismatch: 2,
-            gap_open1: 4,
-            gap_ext1: 2,
-            gap_open2: 6,
-            gap_ext2: 1,
+            gap_opening1: 4,
+            gap_extension1: 2,
+            gap_opening2: 6,
+            gap_extension2: 1,
         };
 
         // Test raw tracepoints roundtrip
@@ -2138,12 +2134,12 @@ mod tests {
         // Generate diagonal tracepoints
         let diagonal_tracepoints = cigar_to_tracepoints_diagonal(original_cigar, max_diff);
 
-        let distance_mode = DistanceMode::Affine2p {
+        let distance_mode = Distance::GapAffine2p {
             mismatch: 2,
-            gap_open1: 4,
-            gap_ext1: 2,
-            gap_open2: 6,
-            gap_ext2: 1,
+            gap_opening1: 4,
+            gap_extension1: 2,
+            gap_opening2: 6,
+            gap_extension2: 1,
         };
 
         // Verify they can be reconstructed

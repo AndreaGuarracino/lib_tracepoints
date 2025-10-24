@@ -1,4 +1,4 @@
-use lib_tracepoints::{cigar_to_tracepoints, tracepoints_to_cigar, DistanceMode};
+use lib_tracepoints::{cigar_to_tracepoints, tracepoints_to_cigar, Distance};
 
 fn main() {
     let cigar = "5=1I5=";
@@ -8,11 +8,8 @@ fn main() {
     // Convert to tracepoints with max 3 differences per segment
     let tracepoints = cigar_to_tracepoints(cigar, 3);
 
-    // Use edit distance mode (unit costs)
-    let edit_mode = DistanceMode::Edit {
-        mismatch: 1,
-        gap_opening: 1,
-    };
+    // Use edit distance mode (unit costs for mismatch and indels)
+    let edit_mode = Distance::Edit;
 
     // Reconstruct CIGAR
     let reconstructed = tracepoints_to_cigar(&tracepoints, a_seq, b_seq, 0, 0, &edit_mode);

@@ -1218,8 +1218,7 @@ struct GapRun {
 /// 
 /// A run consists of indels of the same type (all I or all D) separated by
 /// matches/mismatches of length < max_separation
-fn find_gap_runs(cigar: &str, max_separation: usize) -> Vec<GapRun> {
-    let ops = cigar_str_to_cigar_ops(cigar);
+fn find_gap_runs(ops: &[(usize, char)], max_separation: usize) -> Vec<GapRun> {
     let mut runs = Vec::new();
     
     let mut a_pos = 0;
@@ -1353,8 +1352,11 @@ pub fn refine_cigar_gaps(
     b_seq: &[u8],
     max_separation: usize,
 ) -> String {
-    let runs = find_gap_runs(cigar, max_separation);
+    let ops = cigar_str_to_cigar_ops(cigar);
     
+    // Find gap runs using the parsed operations
+    let runs = find_gap_runs(&ops, max_separation);
+
     if runs.is_empty() {
         return cigar.to_string();
     }
@@ -1403,7 +1405,7 @@ pub fn refine_cigar_gaps(
             } else {
                 // If refinement changed lengths (shouldn't happen with proper alignment),
                 // keep original
-                result_ops.extend(run_ops);
+                panic!("Refinement changed sequence lengths, keeping original run");
             }
             
             // Skip past this run
@@ -1430,7 +1432,10 @@ pub fn refine_cigar_gaps_with_aligner(
     max_separation: usize,
     aligner: &mut AffineWavefronts,
 ) -> String {
-    let runs = find_gap_runs(cigar, max_separation);
+    let ops = cigar_str_to_cigar_ops(cigar);
+    
+    // Find gap runs using the parsed operations
+    let runs = find_gap_runs(&ops, max_separation);
     
     if runs.is_empty() {
         return cigar.to_string();

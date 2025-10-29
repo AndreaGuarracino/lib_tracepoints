@@ -28,22 +28,22 @@ pub fn cigar_to_tracepoints(cigar: &str, max_diff: usize) -> Vec<(usize, usize)>
     }
 }
 
-/// Convert CIGAR string into mixed tracepoints
-///
-/// Like cigar_to_tracepoints but preserves special operations (H, N, P, S).
-pub fn cigar_to_mixed_tracepoints(cigar: &str, max_diff: usize) -> Vec<MixedRepresentation> {
-    match process_cigar_unified(cigar, max_diff, true, false) {
-        Tracepoints::Mixed(tracepoints) => tracepoints,
-        _ => unreachable!(),
-    }
-}
-
 /// Convert CIGAR string into raw standard tracepoints
 ///
 /// Like cigar_to_tracepoints but allows indels to be split across segments.
 pub fn cigar_to_tracepoints_raw(cigar: &str, max_diff: usize) -> Vec<(usize, usize)> {
     match process_cigar_unified(cigar, max_diff, false, true) {
         Tracepoints::Standard(tracepoints) => tracepoints,
+        _ => unreachable!(),
+    }
+}
+
+/// Convert CIGAR string into mixed tracepoints
+///
+/// Like cigar_to_tracepoints but preserves special operations (H, N, P, S).
+pub fn cigar_to_mixed_tracepoints(cigar: &str, max_diff: usize) -> Vec<MixedRepresentation> {
+    match process_cigar_unified(cigar, max_diff, true, false) {
+        Tracepoints::Mixed(tracepoints) => tracepoints,
         _ => unreachable!(),
     }
 }
@@ -117,7 +117,36 @@ pub fn tracepoints_to_cigar(
     b_start: usize,
     distance: &Distance,
 ) -> String {
-    reconstruct_cigar_from_segments(tracepoints, a_seq, b_seq, a_start, b_start, distance)
+    let aligner = distance.create_aligner(None);
+    tracepoints_to_cigar_with_aligner(
+        tracepoints,
+        a_seq,
+        b_seq,
+        a_start,
+        b_start,
+        &aligner,
+    )
+}
+
+/// Reconstruct CIGAR string from standard tracepoints with provided aligner
+///
+/// Like `tracepoints_to_cigar`, but allows callers to reuse an existing aligner.
+pub fn tracepoints_to_cigar_with_aligner(
+    tracepoints: &[(usize, usize)],
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    b_start: usize,
+    aligner: &AffineWavefronts,
+) -> String {
+    reconstruct_cigar_from_segments_with_aligner(
+        tracepoints,
+        a_seq,
+        b_seq,
+        a_start,
+        b_start,
+        aligner,
+    )
 }
 
 /// Reconstruct CIGAR string from mixed tracepoints
@@ -129,7 +158,28 @@ pub fn mixed_tracepoints_to_cigar(
     b_start: usize,
     distance: &Distance,
 ) -> String {
-    let mut aligner = distance.create_aligner(None);
+    let aligner = distance.create_aligner(None);
+    mixed_tracepoints_to_cigar_with_aligner(
+        mixed_tracepoints,
+        a_seq,
+        b_seq,
+        a_start,
+        b_start,
+        &aligner,
+    )
+}
+
+/// Reconstruct CIGAR string from mixed tracepoints with provided aligner
+///
+/// Like `mixed_tracepoints_to_cigar`, but allows callers to reuse an existing aligner.
+pub fn mixed_tracepoints_to_cigar_with_aligner(
+    mixed_tracepoints: &[MixedRepresentation],
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    b_start: usize,
+    aligner: &AffineWavefronts,
+) -> String {
     let mut cigar_ops = Vec::new();
     let mut current_a = a_start;
     let mut current_b = b_start;
@@ -152,7 +202,7 @@ pub fn mixed_tracepoints_to_cigar(
                     let seg_ops = align_sequences_wfa(
                         &a_seq[current_a..a_end],
                         &b_seq[current_b..b_end],
-                        &mut aligner,
+                        aligner,
                     );
                     cigar_ops.extend(seg_ops);
                     current_a = a_end;
@@ -187,14 +237,14 @@ pub fn variable_tracepoints_to_cigar(
 
 /// Reconstruct CIGAR string from variable tracepoints with provided aligner
 ///
-/// Like `variable_tracepoints_to_cigar`, but allows callers to prepare an aligner and reuse it multiple times.
+/// Like `variable_tracepoints_to_cigar`, but allows callers to reuse an existing aligner.
 pub fn variable_tracepoints_to_cigar_with_aligner(
     variable_tracepoints: &[(usize, Option<usize>)],
     a_seq: &[u8],
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    aligner: &mut AffineWavefronts,
+    aligner: &AffineWavefronts,
 ) -> String {
     let regular_tracepoints = from_variable_format(variable_tracepoints);
     reconstruct_cigar_from_segments_with_aligner(
@@ -218,7 +268,36 @@ pub fn tracepoints_to_cigar_diagonal(
 ) -> String {
     // Diagonal tracepoints can be reconstructed the same way as regular tracepoints
     // since they represent the same (a_len, b_len) format
-    tracepoints_to_cigar(tracepoints, a_seq, b_seq, a_start, b_start, distance)
+    let aligner = distance.create_aligner(None);
+    tracepoints_to_cigar_diagonal_with_aligner(
+        tracepoints,
+        a_seq,
+        b_seq,
+        a_start,
+        b_start,
+        &aligner,
+    )
+}
+
+/// Reconstruct CIGAR string from standard diagonal tracepoints with provided aligner
+///
+/// Like `tracepoints_to_cigar_diagonal`, but allows callers to reuse an existing aligner.
+pub fn tracepoints_to_cigar_diagonal_with_aligner(
+    tracepoints: &[(usize, usize)],
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    b_start: usize,
+    aligner: &AffineWavefronts,
+) -> String {
+    reconstruct_cigar_from_segments_with_aligner(
+        tracepoints,
+        a_seq,
+        b_seq,
+        a_start,
+        b_start,
+        aligner,
+    )
 }
 
 /// Reconstruct CIGAR string from mixed tracepoints using diagonal distance segmentation
@@ -232,7 +311,36 @@ pub fn mixed_tracepoints_to_cigar_diagonal(
 ) -> String {
     // Mixed diagonal tracepoints can be reconstructed the same way as regular mixed tracepoints
     // since they use the same MixedRepresentation format
-    mixed_tracepoints_to_cigar(mixed_tracepoints, a_seq, b_seq, a_start, b_start, distance)
+    let aligner = distance.create_aligner(None);
+    mixed_tracepoints_to_cigar_diagonal_with_aligner(
+        mixed_tracepoints,
+        a_seq,
+        b_seq,
+        a_start,
+        b_start,
+        &aligner,
+    )
+}
+
+/// Reconstruct CIGAR string from mixed diagonal tracepoints with provided aligner
+///
+/// Like `mixed_tracepoints_to_cigar_diagonal`, but allows callers to reuse an existing aligner.
+pub fn mixed_tracepoints_to_cigar_diagonal_with_aligner(
+    mixed_tracepoints: &[MixedRepresentation],
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    b_start: usize,
+    aligner: &AffineWavefronts,
+) -> String {
+    mixed_tracepoints_to_cigar_with_aligner(
+        mixed_tracepoints,
+        a_seq,
+        b_seq,
+        a_start,
+        b_start,
+        aligner,
+    )
 }
 
 /// Reconstruct CIGAR string from variable tracepoints using diagonal distance segmentation
@@ -258,14 +366,14 @@ pub fn variable_tracepoints_to_cigar_diagonal(
 
 /// Reconstruct CIGAR string from variable diagonal tracepoints with provided aligner
 ///
-/// Like `variable_tracepoints_to_cigar_diagonal`, but allows callers to prepare an aligner and reuse it multiple times.
+/// Like `variable_tracepoints_to_cigar_diagonal`, but allows callers to reuse an existing aligner.
 pub fn variable_tracepoints_to_cigar_diagonal_with_aligner(
     variable_tracepoints: &[(usize, Option<usize>)],
     a_seq: &[u8],
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    aligner: &mut AffineWavefronts,
+    aligner: &AffineWavefronts,
 ) -> String {
     // Variable diagonal tracepoints can be reconstructed the same way as regular variable tracepoints
     variable_tracepoints_to_cigar_with_aligner(
@@ -284,7 +392,7 @@ pub fn variable_tracepoints_to_cigar_diagonal_with_aligner(
 pub fn align_sequences_wfa(
     query: &[u8],
     target: &[u8],
-    aligner: &mut AffineWavefronts,
+    aligner: &AffineWavefronts,
 ) -> Vec<(usize, char)> {
     let status = aligner.align(target, query); // Target vs query to get I/D in CIGAR for query insertions/deletions
 
@@ -582,27 +690,27 @@ fn reconstruct_cigar_from_segments(
     b_start: usize,
     distance: &Distance,
 ) -> String {
-    let mut aligner = distance.create_aligner(None);
+    let aligner = distance.create_aligner(None);
     reconstruct_cigar_from_segments_with_aligner(
         segments,
         a_seq,
         b_seq,
         a_start,
         b_start,
-        &mut aligner,
+        &aligner,
     )
 }
 
 /// Reconstruct CIGAR from tracepoints with using provided aligner
 ///
-/// Like `reconstruct_cigar_from_segments`, but allows callers to prepare an aligner and reuse it multiple times.
+/// Like `reconstruct_cigar_from_segments`, but allows callers to reuse an existing aligner.
 fn reconstruct_cigar_from_segments_with_aligner(
     segments: &[(usize, usize)],
     a_seq: &[u8],
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    aligner: &mut AffineWavefronts,
+    aligner: &AffineWavefronts,
 ) -> String {
     let mut cigar_ops = Vec::new();
     let mut current_a = a_start;
@@ -1104,7 +1212,7 @@ pub fn tracepoints_to_cigar_fastga(
     // Use edit distance mode as FASTGA does
     let distance = Distance::Edit;
 
-    let mut aligner = distance.create_aligner(None);
+    let aligner = distance.create_aligner(None);
     tracepoints_to_cigar_fastga_with_aligner(
         segments,
         trace_spacing,
@@ -1113,13 +1221,13 @@ pub fn tracepoints_to_cigar_fastga(
         a_start,
         _b_start,
         complement,
-        &mut aligner,
+        &aligner,
     )
 }
 
 /// Reconstruct CIGAR from FASTGA-style tracepoints with provided aligner
 ///
-/// Like `tracepoints_to_cigar_fastga`, but allows callers to prepare an aligner and reuse it multiple times.
+/// Like `tracepoints_to_cigar_fastga`, but allows callers to reuse an existing aligner.
 pub fn tracepoints_to_cigar_fastga_with_aligner(
     segments: &[(usize, usize)],
     trace_spacing: usize,
@@ -1128,7 +1236,7 @@ pub fn tracepoints_to_cigar_fastga_with_aligner(
     a_start: usize,
     _b_start: usize,
     complement: bool,
-    aligner: &mut AffineWavefronts,
+    aligner: &AffineWavefronts,
 ) -> String {
     let mut cigar_ops = Vec::new();
 
@@ -1558,7 +1666,7 @@ mod tests {
             gap_opening2: 6,
             gap_extension2: 1,
         };
-        let mut aligner = distance.create_aligner(None);
+        let aligner = distance.create_aligner(None);
 
         // Test the new function
         let reconstructed_cigar = variable_tracepoints_to_cigar_with_aligner(
@@ -1567,7 +1675,7 @@ mod tests {
             b_seq,
             0,
             0,
-            &mut aligner,
+            &aligner,
         );
 
         // Should produce the same result
@@ -1591,7 +1699,7 @@ mod tests {
             b_seq,
             0,
             0,
-            &mut aligner,
+            &aligner,
         );
 
         let expected_cigar2 =

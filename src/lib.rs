@@ -115,9 +115,9 @@ pub fn tracepoints_to_cigar(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance_mode: &Distance,
+    distance: &Distance,
 ) -> String {
-    reconstruct_cigar_from_segments(tracepoints, a_seq, b_seq, a_start, b_start, distance_mode)
+    reconstruct_cigar_from_segments(tracepoints, a_seq, b_seq, a_start, b_start, distance)
 }
 
 /// Reconstruct CIGAR string from mixed tracepoints
@@ -127,9 +127,9 @@ pub fn mixed_tracepoints_to_cigar(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance_mode: &Distance,
+    distance: &Distance,
 ) -> String {
-    let mut aligner = distance_mode.create_aligner(None);
+    let mut aligner = distance.create_aligner(None);
     let mut cigar_ops = Vec::new();
     let mut current_a = a_start;
     let mut current_b = b_start;
@@ -172,7 +172,7 @@ pub fn variable_tracepoints_to_cigar(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance_mode: &Distance,
+    distance: &Distance,
 ) -> String {
     let regular_tracepoints = from_variable_format(variable_tracepoints);
     reconstruct_cigar_from_segments(
@@ -181,7 +181,7 @@ pub fn variable_tracepoints_to_cigar(
         b_seq,
         a_start,
         b_start,
-        distance_mode,
+        distance,
     )
 }
 
@@ -214,11 +214,11 @@ pub fn tracepoints_to_cigar_diagonal(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance_mode: &Distance,
+    distance: &Distance,
 ) -> String {
     // Diagonal tracepoints can be reconstructed the same way as regular tracepoints
     // since they represent the same (a_len, b_len) format
-    tracepoints_to_cigar(tracepoints, a_seq, b_seq, a_start, b_start, distance_mode)
+    tracepoints_to_cigar(tracepoints, a_seq, b_seq, a_start, b_start, distance)
 }
 
 /// Reconstruct CIGAR string from mixed tracepoints using diagonal distance segmentation
@@ -228,18 +228,11 @@ pub fn mixed_tracepoints_to_cigar_diagonal(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance_mode: &Distance,
+    distance: &Distance,
 ) -> String {
     // Mixed diagonal tracepoints can be reconstructed the same way as regular mixed tracepoints
     // since they use the same MixedRepresentation format
-    mixed_tracepoints_to_cigar(
-        mixed_tracepoints,
-        a_seq,
-        b_seq,
-        a_start,
-        b_start,
-        distance_mode,
-    )
+    mixed_tracepoints_to_cigar(mixed_tracepoints, a_seq, b_seq, a_start, b_start, distance)
 }
 
 /// Reconstruct CIGAR string from variable tracepoints using diagonal distance segmentation
@@ -249,7 +242,7 @@ pub fn variable_tracepoints_to_cigar_diagonal(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance_mode: &Distance,
+    distance: &Distance,
 ) -> String {
     // Variable diagonal tracepoints can be reconstructed the same way as regular variable tracepoints
     // since they use the same (usize, Option<usize>) format
@@ -259,7 +252,7 @@ pub fn variable_tracepoints_to_cigar_diagonal(
         b_seq,
         a_start,
         b_start,
-        distance_mode,
+        distance,
     )
 }
 
@@ -587,9 +580,9 @@ fn reconstruct_cigar_from_segments(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance_mode: &Distance,
+    distance: &Distance,
 ) -> String {
-    let mut aligner = distance_mode.create_aligner(None);
+    let mut aligner = distance.create_aligner(None);
     reconstruct_cigar_from_segments_with_aligner(
         segments,
         a_seq,
@@ -1109,9 +1102,9 @@ pub fn tracepoints_to_cigar_fastga(
     complement: bool,
 ) -> String {
     // Use edit distance mode as FASTGA does
-    let distance_mode = Distance::Edit;
+    let distance = Distance::Edit;
 
-    let mut aligner = distance_mode.create_aligner(None);
+    let mut aligner = distance.create_aligner(None);
     tracepoints_to_cigar_fastga_with_aligner(
         segments,
         trace_spacing,
@@ -1235,13 +1228,13 @@ mod tests {
     }
 
     #[test]
-    fn test_distance_mode_affine2p() {
+    fn test_distance_affine2p() {
         let original_cigar = "1=1I18=";
         let a_seq = b"ACGTACGTACACGTACGTAC"; // 20 bases
         let b_seq = b"AGTACGTACACGTACGTAC"; // 19 bases (missing C)
         let max_diff = 5;
 
-        let distance_mode = Distance::GapAffine2p {
+        let distance = Distance::GapAffine2p {
             mismatch: 2,
             gap_opening1: 4,
             gap_extension1: 2,
@@ -1251,8 +1244,7 @@ mod tests {
 
         // Test tracepoints roundtrip with Distance API
         let tracepoints = cigar_to_tracepoints(original_cigar, max_diff);
-        let reconstructed_cigar =
-            tracepoints_to_cigar(&tracepoints, a_seq, b_seq, 0, 0, &distance_mode);
+        let reconstructed_cigar = tracepoints_to_cigar(&tracepoints, a_seq, b_seq, 0, 0, &distance);
         assert_eq!(
             reconstructed_cigar, original_cigar,
             "GapAffine2p distance mode roundtrip failed"
@@ -1260,18 +1252,17 @@ mod tests {
     }
 
     #[test]
-    fn test_distance_mode_edit() {
+    fn test_distance_edit() {
         let original_cigar = "1=1I18=";
         let a_seq = b"ACGTACGTACACGTACGTAC"; // 20 bases
         let b_seq = b"AGTACGTACACGTACGTAC"; // 19 bases (missing C)
         let max_diff = 5;
 
-        let distance_mode = Distance::Edit;
+        let distance = Distance::Edit;
 
         // Test tracepoints roundtrip with edit distance mode
         let tracepoints = cigar_to_tracepoints(original_cigar, max_diff);
-        let reconstructed_cigar =
-            tracepoints_to_cigar(&tracepoints, a_seq, b_seq, 0, 0, &distance_mode);
+        let reconstructed_cigar = tracepoints_to_cigar(&tracepoints, a_seq, b_seq, 0, 0, &distance);
         assert_eq!(
             reconstructed_cigar, original_cigar,
             "Edit distance mode roundtrip failed"
@@ -1401,7 +1392,7 @@ mod tests {
             ),
         ];
 
-        let distance_mode = Distance::GapAffine2p {
+        let distance = Distance::GapAffine2p {
             mismatch,
             gap_opening1: gap_open1,
             gap_extension1: gap_ext1,
@@ -1411,7 +1402,7 @@ mod tests {
 
         for (i, (mixed_tracepoints, expected_cigar)) in test_cases.iter().enumerate() {
             let result =
-                mixed_tracepoints_to_cigar(mixed_tracepoints, a_seq, b_seq, 0, 0, &distance_mode);
+                mixed_tracepoints_to_cigar(mixed_tracepoints, a_seq, b_seq, 0, 0, &distance);
 
             assert_eq!(
                 result,
@@ -1435,15 +1426,14 @@ mod tests {
             MixedRepresentation::Tracepoint(4, 4),
         ];
 
-        let distance_mode = Distance::GapAffine2p {
+        let distance = Distance::GapAffine2p {
             mismatch: 2,
             gap_opening1: 4,
             gap_extension1: 2,
             gap_opening2: 6,
             gap_extension2: 1,
         };
-        let result =
-            mixed_tracepoints_to_cigar(&mixed_tracepoints, a_seq, b_seq, 0, 0, &distance_mode);
+        let result = mixed_tracepoints_to_cigar(&mixed_tracepoints, a_seq, b_seq, 0, 0, &distance);
 
         // Since sequences are identical, we expect matches for the tracepoint segments
         assert_eq!(result, "2S6=1H4=");
@@ -1532,7 +1522,7 @@ mod tests {
         let b_seq = b"AGTACGTACACGTACGTAC"; // 19 bases (missing C)
         let max_diff = 5;
 
-        let distance_mode = Distance::GapAffine2p {
+        let distance = Distance::GapAffine2p {
             mismatch: 2,
             gap_opening1: 4,
             gap_extension1: 2,
@@ -1542,14 +1532,8 @@ mod tests {
 
         // Test variable tracepoints roundtrip
         let variable_tracepoints = cigar_to_variable_tracepoints(original_cigar, max_diff);
-        let reconstructed_cigar = variable_tracepoints_to_cigar(
-            &variable_tracepoints,
-            a_seq,
-            b_seq,
-            0,
-            0,
-            &distance_mode,
-        );
+        let reconstructed_cigar =
+            variable_tracepoints_to_cigar(&variable_tracepoints, a_seq, b_seq, 0, 0, &distance);
         assert_eq!(
             reconstructed_cigar, original_cigar,
             "Variable tracepoint roundtrip failed"
@@ -1750,7 +1734,7 @@ mod tests {
         let b_seq = b"ACCGTCGAA"; // 9 bases
         let max_diff = 2;
 
-        let distance_mode = Distance::GapAffine2p {
+        let distance = Distance::GapAffine2p {
             mismatch: 2,
             gap_opening1: 4,
             gap_extension1: 2,
@@ -1761,7 +1745,7 @@ mod tests {
         // Test raw tracepoints roundtrip
         let raw_tracepoints = cigar_to_tracepoints_raw(original_cigar, max_diff);
         let reconstructed_cigar =
-            tracepoints_to_cigar(&raw_tracepoints, a_seq, b_seq, 0, 0, &distance_mode);
+            tracepoints_to_cigar(&raw_tracepoints, a_seq, b_seq, 0, 0, &distance);
 
         // The reconstructed CIGAR might be slightly different due to realignment,
         // but should represent the same alignment
@@ -2061,7 +2045,7 @@ mod tests {
         // Generate diagonal tracepoints
         let diagonal_tracepoints = cigar_to_tracepoints_diagonal(original_cigar, max_diff);
 
-        let distance_mode = Distance::GapAffine2p {
+        let distance = Distance::GapAffine2p {
             mismatch: 2,
             gap_opening1: 4,
             gap_extension1: 2,
@@ -2071,7 +2055,7 @@ mod tests {
 
         // Verify they can be reconstructed
         let reconstructed_cigar =
-            tracepoints_to_cigar(&diagonal_tracepoints, a_seq, b_seq, 0, 0, &distance_mode);
+            tracepoints_to_cigar(&diagonal_tracepoints, a_seq, b_seq, 0, 0, &distance);
 
         // Should not be empty and should represent a valid alignment
         assert!(

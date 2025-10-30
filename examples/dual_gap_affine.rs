@@ -1,4 +1,4 @@
-use lib_tracepoints::{cigar_to_tracepoints, tracepoints_to_cigar, Distance};
+use lib_tracepoints::{cigar_to_tracepoints, tracepoints_to_cigar, ComplexityMetric, Distance};
 
 fn main() {
     let a_seq = b"ACGTACGTACGT"; // 12 bases
@@ -6,7 +6,7 @@ fn main() {
     let cigar = "1=1X4=1X3=2I";
 
     // Convert to tracepoints with max 2 differences per segment
-    let tracepoints = cigar_to_tracepoints(cigar, 2);
+    let tracepoints = cigar_to_tracepoints(cigar, 2, ComplexityMetric::EditDistance);
 
     // Use affine gap penalties with dual costs
     let distance_mode = Distance::GapAffine2p {
@@ -18,7 +18,15 @@ fn main() {
     };
 
     // Reconstruct CIGAR
-    let reconstructed = tracepoints_to_cigar(&tracepoints, a_seq, b_seq, 0, 0, &distance_mode);
+    let reconstructed = tracepoints_to_cigar(
+        &tracepoints,
+        a_seq,
+        b_seq,
+        0,
+        0,
+        ComplexityMetric::EditDistance,
+        &distance_mode,
+    );
 
     println!("Tracepoints: {:?}", tracepoints);
     println!("     Original CIGAR: {}", cigar);

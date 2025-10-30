@@ -1,12 +1,15 @@
-pub use lib_wfa2::affine_wavefront::{AffineWavefronts, AlignmentStatus, Distance};
+pub use lib_wfa2::affine_wavefront::{
+    AffineWavefronts, AlignmentStatus, Distance, HeuristicStrategy,
+};
 use std::cmp::min;
 
-/// Output type for tracepoint processing
-enum Tracepoints {
-    /// Standard tracepoints as (a_len, b_len) pairs
-    Standard(Vec<(usize, usize)>),
-    /// Mixed representation with special CIGAR operations preserved
-    Mixed(Vec<MixedRepresentation>),
+/// Metric selector for per-segment band computation used by heuristic alignment
+#[derive(Copy, Clone)]
+pub enum ComplexityMetric {
+    /// Edit distance (count mismatches + insertions + deletions)
+    EditDistance,
+    /// Diagonal distance (distance from the main diagonal)
+    DiagonalDistance,
 }
 
 /// Represents a CIGAR segment that can be either aligned or preserved as-is
@@ -18,11 +21,26 @@ pub enum MixedRepresentation {
     CigarOp(usize, char),
 }
 
+/// Output type for tracepoint processing
+enum Tracepoints {
+    /// Standard tracepoints as (a_len, b_len) pairs
+    Standard(Vec<(usize, usize)>),
+    /// Mixed representation with special CIGAR operations preserved
+    Mixed(Vec<MixedRepresentation>),
+}
+
 /// Convert CIGAR string into standard tracepoints
 ///
-/// Segments CIGAR into tracepoints with at most max_diff differences per segment.
-pub fn cigar_to_tracepoints(cigar: &str, max_diff: usize) -> Vec<(usize, usize)> {
-    match process_cigar_unified(cigar, max_diff, false, false) {
+/// Segments CIGAR into tracepoints according to the requested complexity metric.
+/// `max_value` represents the maximum edit distance per segment when using
+/// `ComplexityMetric::EditDistance`, or the maximum allowed diagonal deviation
+/// when using `ComplexityMetric::DiagonalDistance`.
+pub fn cigar_to_tracepoints(
+    cigar: &str,
+    max_value: usize,
+    metric: ComplexityMetric,
+) -> Vec<(usize, usize)> {
+    match process_cigar_segments(cigar, max_value, false, false, metric) {
         Tracepoints::Standard(tracepoints) => tracepoints,
         _ => unreachable!(),
     }
@@ -30,9 +48,14 @@ pub fn cigar_to_tracepoints(cigar: &str, max_diff: usize) -> Vec<(usize, usize)>
 
 /// Convert CIGAR string into raw standard tracepoints
 ///
-/// Like cigar_to_tracepoints but allows indels to be split across segments.
-pub fn cigar_to_tracepoints_raw(cigar: &str, max_diff: usize) -> Vec<(usize, usize)> {
-    match process_cigar_unified(cigar, max_diff, false, true) {
+/// Like `cigar_to_tracepoints` but allows indels to be split across segments.
+/// Currently only `ComplexityMetric::EditDistance` performs splitting.
+pub fn cigar_to_tracepoints_raw(
+    cigar: &str,
+    max_value: usize,
+    metric: ComplexityMetric,
+) -> Vec<(usize, usize)> {
+    match process_cigar_segments(cigar, max_value, false, true, metric) {
         Tracepoints::Standard(tracepoints) => tracepoints,
         _ => unreachable!(),
     }
@@ -40,9 +63,13 @@ pub fn cigar_to_tracepoints_raw(cigar: &str, max_diff: usize) -> Vec<(usize, usi
 
 /// Convert CIGAR string into mixed tracepoints
 ///
-/// Like cigar_to_tracepoints but preserves special operations (H, N, P, S).
-pub fn cigar_to_mixed_tracepoints(cigar: &str, max_diff: usize) -> Vec<MixedRepresentation> {
-    match process_cigar_unified(cigar, max_diff, true, false) {
+/// Like `cigar_to_tracepoints` but preserves special operations (H, N, P, S).
+pub fn cigar_to_mixed_tracepoints(
+    cigar: &str,
+    max_value: usize,
+    metric: ComplexityMetric,
+) -> Vec<MixedRepresentation> {
+    match process_cigar_segments(cigar, max_value, true, false, metric) {
         Tracepoints::Mixed(tracepoints) => tracepoints,
         _ => unreachable!(),
     }
@@ -50,9 +77,14 @@ pub fn cigar_to_mixed_tracepoints(cigar: &str, max_diff: usize) -> Vec<MixedRepr
 
 /// Convert CIGAR string into raw mixed tracepoints
 ///
-/// Like cigar_to_mixed_tracepoints but allows indels to be split across segments.
-pub fn cigar_to_mixed_tracepoints_raw(cigar: &str, max_diff: usize) -> Vec<MixedRepresentation> {
-    match process_cigar_unified(cigar, max_diff, true, true) {
+/// Like `cigar_to_mixed_tracepoints` but allows indels to be split across segments.
+/// Currently only `ComplexityMetric::EditDistance` performs splitting.
+pub fn cigar_to_mixed_tracepoints_raw(
+    cigar: &str,
+    max_value: usize,
+    metric: ComplexityMetric,
+) -> Vec<MixedRepresentation> {
+    match process_cigar_segments(cigar, max_value, true, true, metric) {
         Tracepoints::Mixed(tracepoints) => tracepoints,
         _ => unreachable!(),
     }
@@ -61,51 +93,24 @@ pub fn cigar_to_mixed_tracepoints_raw(cigar: &str, max_diff: usize) -> Vec<Mixed
 /// Convert CIGAR string into variable tracepoints
 ///
 /// Uses (length, None) when a_len == b_len, otherwise (a_len, Some(b_len)).
-pub fn cigar_to_variable_tracepoints(cigar: &str, max_diff: usize) -> Vec<(usize, Option<usize>)> {
-    to_variable_format(cigar_to_tracepoints(cigar, max_diff))
+pub fn cigar_to_variable_tracepoints(
+    cigar: &str,
+    max_value: usize,
+    metric: ComplexityMetric,
+) -> Vec<(usize, Option<usize>)> {
+    to_variable_format(cigar_to_tracepoints(cigar, max_value, metric))
 }
 
 /// Convert CIGAR string into raw variable tracepoints
 ///
-/// Like cigar_to_variable_tracepoints but allows indels to be split across segments.
+/// Like `cigar_to_variable_tracepoints` but allows indels to be split across segments when supported by the metric.
+/// Currently only `ComplexityMetric::EditDistance` performs splitting.
 pub fn cigar_to_variable_tracepoints_raw(
     cigar: &str,
-    max_diff: usize,
+    max_value: usize,
+    metric: ComplexityMetric,
 ) -> Vec<(usize, Option<usize>)> {
-    to_variable_format(cigar_to_tracepoints_raw(cigar, max_diff))
-}
-
-/// Convert CIGAR string into standard tracepoints using diagonal distance segmentation
-///
-/// Segments CIGAR into tracepoints with at most max_dist from the diagonal.
-pub fn cigar_to_tracepoints_diagonal(cigar: &str, max_dist: usize) -> Vec<(usize, usize)> {
-    match process_cigar_unified_diagonal(cigar, max_dist, false) {
-        Tracepoints::Standard(tracepoints) => tracepoints,
-        _ => unreachable!(),
-    }
-}
-
-/// Convert CIGAR string into mixed tracepoints using diagonal distance segmentation
-///
-/// Like cigar_to_tracepoints_diagonal but preserves special operations (H, N, P, S).
-pub fn cigar_to_mixed_tracepoints_diagonal(
-    cigar: &str,
-    max_dist: usize,
-) -> Vec<MixedRepresentation> {
-    match process_cigar_unified_diagonal(cigar, max_dist, true) {
-        Tracepoints::Mixed(tracepoints) => tracepoints,
-        _ => unreachable!(),
-    }
-}
-
-/// Convert CIGAR string into variable tracepoints using diagonal distance segmentation
-///
-/// Uses (length, None) when a_len == b_len, otherwise (a_len, Some(b_len)).
-pub fn cigar_to_variable_tracepoints_diagonal(
-    cigar: &str,
-    max_dist: usize,
-) -> Vec<(usize, Option<usize>)> {
-    to_variable_format(cigar_to_tracepoints_diagonal(cigar, max_dist))
+    to_variable_format(cigar_to_tracepoints_raw(cigar, max_value, metric))
 }
 
 /// Reconstruct CIGAR string from standard tracepoints
@@ -115,16 +120,20 @@ pub fn tracepoints_to_cigar(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
+    metric: ComplexityMetric,
     distance: &Distance,
 ) -> String {
-    let aligner = distance.create_aligner(None);
+    let mut aligner = distance.create_aligner(None);
     tracepoints_to_cigar_with_aligner(
         tracepoints,
         a_seq,
         b_seq,
         a_start,
         b_start,
-        &aligner,
+        metric,
+        &mut aligner,
+        false,
+        0,
     )
 }
 
@@ -137,15 +146,21 @@ pub fn tracepoints_to_cigar_with_aligner(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    aligner: &AffineWavefronts,
+    metric: ComplexityMetric,
+    aligner: &mut AffineWavefronts,
+    apply_heuristic: bool,
+    max_value: usize,
 ) -> String {
-    reconstruct_cigar_from_segments_with_aligner(
+    reconstruct_cigar_from_segments(
         tracepoints,
         a_seq,
         b_seq,
         a_start,
         b_start,
+        metric,
         aligner,
+        apply_heuristic,
+        max_value,
     )
 }
 
@@ -156,16 +171,20 @@ pub fn mixed_tracepoints_to_cigar(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
+    metric: ComplexityMetric,
     distance: &Distance,
 ) -> String {
-    let aligner = distance.create_aligner(None);
+    let mut aligner = distance.create_aligner(None);
     mixed_tracepoints_to_cigar_with_aligner(
         mixed_tracepoints,
         a_seq,
         b_seq,
         a_start,
         b_start,
-        &aligner,
+        metric,
+        &mut aligner,
+        false,
+        0,
     )
 }
 
@@ -178,41 +197,22 @@ pub fn mixed_tracepoints_to_cigar_with_aligner(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    aligner: &AffineWavefronts,
+    metric: ComplexityMetric,
+    aligner: &mut AffineWavefronts,
+    apply_heuristic: bool,
+    max_value: usize,
 ) -> String {
-    let mut cigar_ops = Vec::new();
-    let mut current_a = a_start;
-    let mut current_b = b_start;
-
-    for item in mixed_tracepoints {
-        match item {
-            MixedRepresentation::CigarOp(len, op) => {
-                cigar_ops.push((*len, *op));
-            }
-            MixedRepresentation::Tracepoint(a_len, b_len) => {
-                if *a_len > 0 && *b_len == 0 {
-                    cigar_ops.push((*a_len, 'I'));
-                    current_a += a_len;
-                } else if *b_len > 0 && *a_len == 0 {
-                    cigar_ops.push((*b_len, 'D'));
-                    current_b += b_len;
-                } else {
-                    let a_end = current_a + a_len;
-                    let b_end = current_b + b_len;
-                    let seg_ops = align_sequences_wfa(
-                        &a_seq[current_a..a_end],
-                        &b_seq[current_b..b_end],
-                        aligner,
-                    );
-                    cigar_ops.extend(seg_ops);
-                    current_a = a_end;
-                    current_b = b_end;
-                }
-            }
-        }
-    }
-    merge_cigar_ops(&mut cigar_ops);
-    cigar_ops_to_cigar_string(&cigar_ops)
+    reconstruct_cigar_from_mixed_segments(
+        mixed_tracepoints,
+        a_seq,
+        b_seq,
+        a_start,
+        b_start,
+        metric,
+        aligner,
+        apply_heuristic,
+        max_value,
+    )
 }
 
 /// Reconstruct CIGAR string from variable tracepoints
@@ -222,16 +222,21 @@ pub fn variable_tracepoints_to_cigar(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
+    metric: ComplexityMetric,
     distance: &Distance,
 ) -> String {
     let regular_tracepoints = from_variable_format(variable_tracepoints);
+    let mut aligner = distance.create_aligner(None);
     reconstruct_cigar_from_segments(
         &regular_tracepoints,
         a_seq,
         b_seq,
         a_start,
         b_start,
-        distance,
+        metric,
+        &mut aligner,
+        false,
+        0,
     )
 }
 
@@ -244,145 +249,22 @@ pub fn variable_tracepoints_to_cigar_with_aligner(
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    aligner: &AffineWavefronts,
+    metric: ComplexityMetric,
+    aligner: &mut AffineWavefronts,
+    apply_heuristic: bool,
+    max_value: usize,
 ) -> String {
     let regular_tracepoints = from_variable_format(variable_tracepoints);
-    reconstruct_cigar_from_segments_with_aligner(
+    reconstruct_cigar_from_segments(
         &regular_tracepoints,
         a_seq,
         b_seq,
         a_start,
         b_start,
+        metric,
         aligner,
-    )
-}
-
-/// Reconstruct CIGAR string from standard tracepoints using diagonal distance segmentation
-pub fn tracepoints_to_cigar_diagonal(
-    tracepoints: &[(usize, usize)],
-    a_seq: &[u8],
-    b_seq: &[u8],
-    a_start: usize,
-    b_start: usize,
-    distance: &Distance,
-) -> String {
-    // Diagonal tracepoints can be reconstructed the same way as regular tracepoints
-    // since they represent the same (a_len, b_len) format
-    let aligner = distance.create_aligner(None);
-    tracepoints_to_cigar_diagonal_with_aligner(
-        tracepoints,
-        a_seq,
-        b_seq,
-        a_start,
-        b_start,
-        &aligner,
-    )
-}
-
-/// Reconstruct CIGAR string from standard diagonal tracepoints with provided aligner
-///
-/// Like `tracepoints_to_cigar_diagonal`, but allows callers to reuse an existing aligner.
-pub fn tracepoints_to_cigar_diagonal_with_aligner(
-    tracepoints: &[(usize, usize)],
-    a_seq: &[u8],
-    b_seq: &[u8],
-    a_start: usize,
-    b_start: usize,
-    aligner: &AffineWavefronts,
-) -> String {
-    reconstruct_cigar_from_segments_with_aligner(
-        tracepoints,
-        a_seq,
-        b_seq,
-        a_start,
-        b_start,
-        aligner,
-    )
-}
-
-/// Reconstruct CIGAR string from mixed tracepoints using diagonal distance segmentation
-pub fn mixed_tracepoints_to_cigar_diagonal(
-    mixed_tracepoints: &[MixedRepresentation],
-    a_seq: &[u8],
-    b_seq: &[u8],
-    a_start: usize,
-    b_start: usize,
-    distance: &Distance,
-) -> String {
-    // Mixed diagonal tracepoints can be reconstructed the same way as regular mixed tracepoints
-    // since they use the same MixedRepresentation format
-    let aligner = distance.create_aligner(None);
-    mixed_tracepoints_to_cigar_diagonal_with_aligner(
-        mixed_tracepoints,
-        a_seq,
-        b_seq,
-        a_start,
-        b_start,
-        &aligner,
-    )
-}
-
-/// Reconstruct CIGAR string from mixed diagonal tracepoints with provided aligner
-///
-/// Like `mixed_tracepoints_to_cigar_diagonal`, but allows callers to reuse an existing aligner.
-pub fn mixed_tracepoints_to_cigar_diagonal_with_aligner(
-    mixed_tracepoints: &[MixedRepresentation],
-    a_seq: &[u8],
-    b_seq: &[u8],
-    a_start: usize,
-    b_start: usize,
-    aligner: &AffineWavefronts,
-) -> String {
-    mixed_tracepoints_to_cigar_with_aligner(
-        mixed_tracepoints,
-        a_seq,
-        b_seq,
-        a_start,
-        b_start,
-        aligner,
-    )
-}
-
-/// Reconstruct CIGAR string from variable tracepoints using diagonal distance segmentation
-pub fn variable_tracepoints_to_cigar_diagonal(
-    variable_tracepoints: &[(usize, Option<usize>)],
-    a_seq: &[u8],
-    b_seq: &[u8],
-    a_start: usize,
-    b_start: usize,
-    distance: &Distance,
-) -> String {
-    // Variable diagonal tracepoints can be reconstructed the same way as regular variable tracepoints
-    // since they use the same (usize, Option<usize>) format
-    variable_tracepoints_to_cigar(
-        variable_tracepoints,
-        a_seq,
-        b_seq,
-        a_start,
-        b_start,
-        distance,
-    )
-}
-
-/// Reconstruct CIGAR string from variable diagonal tracepoints with provided aligner
-///
-/// Like `variable_tracepoints_to_cigar_diagonal`, but allows callers to reuse an existing aligner.
-pub fn variable_tracepoints_to_cigar_diagonal_with_aligner(
-    variable_tracepoints: &[(usize, Option<usize>)],
-    a_seq: &[u8],
-    b_seq: &[u8],
-    a_start: usize,
-    b_start: usize,
-    aligner: &AffineWavefronts,
-) -> String {
-    // Variable diagonal tracepoints can be reconstructed the same way as regular variable tracepoints
-    variable_tracepoints_to_cigar_with_aligner(
-        variable_tracepoints,
-        a_seq,
-        b_seq,
-        a_start,
-        b_start,
-        aligner,
+        apply_heuristic,
+        max_value,
     )
 }
 
@@ -404,12 +286,34 @@ pub fn align_sequences_wfa(
 
 // Helper functions
 
-/// Unified function to process CIGAR into tracepoints
+/// Dispatch CIGAR processing based on the requested complexity metric
+fn process_cigar_segments(
+    cigar: &str,
+    max_value: usize,
+    preserve_special: bool,
+    allow_indel_split: bool,
+    metric: ComplexityMetric,
+) -> Tracepoints {
+    match metric {
+        ComplexityMetric::EditDistance => {
+            process_cigar_edit_distance(cigar, max_value, preserve_special, allow_indel_split)
+        }
+        ComplexityMetric::DiagonalDistance => {
+            debug_assert!(
+                !allow_indel_split,
+                "allow_indel_split is ignored when using diagonal metric"
+            );
+            process_cigar_diagonal_distance(cigar, max_value, preserve_special)
+        }
+    }
+}
+
+/// Process CIGAR into tracepoints using edit distance segmentation
 ///
 /// Handles both standard and mixed tracepoint generation with optional indel splitting.
 /// Special operations (H, N, P, S) are preserved when preserve_special is true.
 /// Indels can be split across segments when allow_indel_split is true (raw mode).
-fn process_cigar_unified(
+fn process_cigar_edit_distance(
     cigar: &str,
     max_diff: usize,
     preserve_special: bool,
@@ -557,12 +461,12 @@ fn process_cigar_unified(
     }
 }
 
-/// Unified function to process CIGAR into tracepoints using diagonal distance
+/// Process CIGAR into tracepoints using diagonal distance segmentation
 ///
 /// Breaks segments when the distance from the main diagonal exceeds max_dist.
 /// Insertions increase diagonal distance (+), deletions decrease it (-).
 /// The main diagonal is influenced by the overall sequence length difference.
-fn process_cigar_unified_diagonal(
+fn process_cigar_diagonal_distance(
     cigar: &str,
     max_dist: usize,
     preserve_special: bool,
@@ -681,36 +585,17 @@ fn process_cigar_unified_diagonal(
     }
 }
 
-/// Reconstruct CIGAR string from tracepoints
+/// Reconstruct CIGAR from tracepoints with using provided aligner
 fn reconstruct_cigar_from_segments(
     segments: &[(usize, usize)],
     a_seq: &[u8],
     b_seq: &[u8],
     a_start: usize,
     b_start: usize,
-    distance: &Distance,
-) -> String {
-    let aligner = distance.create_aligner(None);
-    reconstruct_cigar_from_segments_with_aligner(
-        segments,
-        a_seq,
-        b_seq,
-        a_start,
-        b_start,
-        &aligner,
-    )
-}
-
-/// Reconstruct CIGAR from tracepoints with using provided aligner
-///
-/// Like `reconstruct_cigar_from_segments`, but allows callers to reuse an existing aligner.
-fn reconstruct_cigar_from_segments_with_aligner(
-    segments: &[(usize, usize)],
-    a_seq: &[u8],
-    b_seq: &[u8],
-    a_start: usize,
-    b_start: usize,
-    aligner: &AffineWavefronts,
+    metric: ComplexityMetric,
+    aligner: &mut AffineWavefronts,
+    apply_heuristic: bool,
+    max_value: usize,
 ) -> String {
     let mut cigar_ops = Vec::new();
     let mut current_a = a_start;
@@ -729,11 +614,68 @@ fn reconstruct_cigar_from_segments_with_aligner(
             // Mixed segment - realign with WFA
             let a_end = current_a + a_len;
             let b_end = current_b + b_len;
-            let seg_ops =
-                align_sequences_wfa(&a_seq[current_a..a_end], &b_seq[current_b..b_end], aligner);
+            if apply_heuristic {
+                let strategy = compute_banded_static_strategy(a_len, b_len, metric, max_value);
+                aligner.set_heuristic(Some(&strategy));
+            }
+            let seg_ops = align_sequences_wfa(
+                &a_seq[current_a..a_end],
+                &b_seq[current_b..b_end],
+                &*aligner,
+            );
             cigar_ops.extend(seg_ops);
             current_a = a_end;
             current_b = b_end;
+        }
+    }
+    merge_cigar_ops(&mut cigar_ops);
+    cigar_ops_to_cigar_string(&cigar_ops)
+}
+
+/// Core reconstruction for mixed segments with optional heuristic application
+fn reconstruct_cigar_from_mixed_segments(
+    mixed_tracepoints: &[MixedRepresentation],
+    a_seq: &[u8],
+    b_seq: &[u8],
+    a_start: usize,
+    b_start: usize,
+    metric: ComplexityMetric,
+    aligner: &mut AffineWavefronts,
+    apply_heuristic: bool,
+    max_value: usize,
+) -> String {
+    let mut cigar_ops = Vec::new();
+    let mut current_a = a_start;
+    let mut current_b = b_start;
+
+    for item in mixed_tracepoints {
+        match item {
+            MixedRepresentation::CigarOp(len, op) => cigar_ops.push((*len, *op)),
+            MixedRepresentation::Tracepoint(a_len, b_len) => {
+                if *a_len > 0 && *b_len == 0 {
+                    cigar_ops.push((*a_len, 'I'));
+                    current_a += a_len;
+                } else if *b_len > 0 && *a_len == 0 {
+                    cigar_ops.push((*b_len, 'D'));
+                    current_b += b_len;
+                } else {
+                    let a_end = current_a + a_len;
+                    let b_end = current_b + b_len;
+                    if apply_heuristic {
+                        let strategy =
+                            compute_banded_static_strategy(*a_len, *b_len, metric, max_value);
+                        aligner.set_heuristic(Some(&strategy));
+                    }
+                    let seg_ops = align_sequences_wfa(
+                        &a_seq[current_a..a_end],
+                        &b_seq[current_b..b_end],
+                        &*aligner,
+                    );
+                    cigar_ops.extend(seg_ops);
+                    current_a = a_end;
+                    current_b = b_end;
+                }
+            }
         }
     }
     merge_cigar_ops(&mut cigar_ops);
@@ -882,6 +824,32 @@ pub fn cigar_ops_to_cigar_string(ops: &[(usize, char)]) -> String {
         .map(|(len, op)| format!("{len}{op}"))
         .collect::<Vec<_>>()
         .join("")
+}
+
+/// Compute a BandedStatic heuristic for a single tracepoint segment
+fn compute_banded_static_strategy(
+    a_len: usize,
+    b_len: usize,
+    metric: ComplexityMetric,
+    max_value: usize,
+) -> HeuristicStrategy {
+    let band_width: i32 = match metric {
+        ComplexityMetric::EditDistance => {
+            let delta = if a_len > b_len {
+                a_len - b_len
+            } else {
+                b_len - a_len
+            };
+            let available = max_value.saturating_sub(delta);
+            let seg_band = available / 2;
+            seg_band as i32
+        }
+        ComplexityMetric::DiagonalDistance => max_value as i32,
+    };
+    HeuristicStrategy::BandedStatic {
+        band_min_k: -band_width,
+        band_max_k: band_width,
+    }
 }
 
 // FASTGA
@@ -1212,7 +1180,7 @@ pub fn tracepoints_to_cigar_fastga(
     // Use edit distance mode as FASTGA does
     let distance = Distance::Edit;
 
-    let aligner = distance.create_aligner(None);
+    let mut aligner = distance.create_aligner(None);
     tracepoints_to_cigar_fastga_with_aligner(
         segments,
         trace_spacing,
@@ -1221,7 +1189,7 @@ pub fn tracepoints_to_cigar_fastga(
         a_start,
         _b_start,
         complement,
-        &aligner,
+        &mut aligner,
     )
 }
 
@@ -1322,7 +1290,8 @@ mod tests {
         // Run each test case
         for (i, (max_diff, expected_tracepoints)) in test_cases.iter().enumerate() {
             // Get actual results
-            let tracepoints = cigar_to_tracepoints(cigar, *max_diff);
+            let tracepoints =
+                cigar_to_tracepoints(cigar, *max_diff, ComplexityMetric::EditDistance);
 
             // Check tracepoints
             assert_eq!(
@@ -1351,8 +1320,17 @@ mod tests {
         };
 
         // Test tracepoints roundtrip with Distance API
-        let tracepoints = cigar_to_tracepoints(original_cigar, max_diff);
-        let reconstructed_cigar = tracepoints_to_cigar(&tracepoints, a_seq, b_seq, 0, 0, &distance);
+        let tracepoints =
+            cigar_to_tracepoints(original_cigar, max_diff, ComplexityMetric::EditDistance);
+        let reconstructed_cigar = tracepoints_to_cigar(
+            &tracepoints,
+            a_seq,
+            b_seq,
+            0,
+            0,
+            ComplexityMetric::EditDistance,
+            &distance,
+        );
         assert_eq!(
             reconstructed_cigar, original_cigar,
             "GapAffine2p distance mode roundtrip failed"
@@ -1369,8 +1347,17 @@ mod tests {
         let distance = Distance::Edit;
 
         // Test tracepoints roundtrip with edit distance mode
-        let tracepoints = cigar_to_tracepoints(original_cigar, max_diff);
-        let reconstructed_cigar = tracepoints_to_cigar(&tracepoints, a_seq, b_seq, 0, 0, &distance);
+        let tracepoints =
+            cigar_to_tracepoints(original_cigar, max_diff, ComplexityMetric::EditDistance);
+        let reconstructed_cigar = tracepoints_to_cigar(
+            &tracepoints,
+            a_seq,
+            b_seq,
+            0,
+            0,
+            ComplexityMetric::EditDistance,
+            &distance,
+        );
         assert_eq!(
             reconstructed_cigar, original_cigar,
             "Edit distance mode roundtrip failed"
@@ -1443,7 +1430,8 @@ mod tests {
         ];
 
         for (i, (cigar, max_diff, expected)) in test_cases.iter().enumerate() {
-            let result = cigar_to_mixed_tracepoints(cigar, *max_diff);
+            let result =
+                cigar_to_mixed_tracepoints(cigar, *max_diff, ComplexityMetric::EditDistance);
 
             assert_eq!(
                 result,
@@ -1509,8 +1497,15 @@ mod tests {
         };
 
         for (i, (mixed_tracepoints, expected_cigar)) in test_cases.iter().enumerate() {
-            let result =
-                mixed_tracepoints_to_cigar(mixed_tracepoints, a_seq, b_seq, 0, 0, &distance);
+            let result = mixed_tracepoints_to_cigar(
+                mixed_tracepoints,
+                a_seq,
+                b_seq,
+                0,
+                0,
+                ComplexityMetric::EditDistance,
+                &distance,
+            );
 
             assert_eq!(
                 result,
@@ -1541,7 +1536,15 @@ mod tests {
             gap_opening2: 6,
             gap_extension2: 1,
         };
-        let result = mixed_tracepoints_to_cigar(&mixed_tracepoints, a_seq, b_seq, 0, 0, &distance);
+        let result = mixed_tracepoints_to_cigar(
+            &mixed_tracepoints,
+            a_seq,
+            b_seq,
+            0,
+            0,
+            ComplexityMetric::EditDistance,
+            &distance,
+        );
 
         // Since sequences are identical, we expect matches for the tracepoint segments
         assert_eq!(result, "2S6=1H4=");
@@ -1577,7 +1580,8 @@ mod tests {
         ];
 
         for (i, (cigar, max_diff, expected)) in test_cases.iter().enumerate() {
-            let result = cigar_to_mixed_tracepoints(cigar, *max_diff);
+            let result =
+                cigar_to_mixed_tracepoints(cigar, *max_diff, ComplexityMetric::EditDistance);
             assert_eq!(
                 result,
                 *expected,
@@ -1610,7 +1614,8 @@ mod tests {
         // Run each test case
         for (i, (max_diff, expected_variable_tracepoints)) in test_cases.iter().enumerate() {
             // Get actual results
-            let variable_tracepoints = cigar_to_variable_tracepoints(cigar, *max_diff);
+            let variable_tracepoints =
+                cigar_to_variable_tracepoints(cigar, *max_diff, ComplexityMetric::EditDistance);
 
             // Check variable tracepoints
             assert_eq!(
@@ -1639,9 +1644,17 @@ mod tests {
         };
 
         // Test variable tracepoints roundtrip
-        let variable_tracepoints = cigar_to_variable_tracepoints(original_cigar, max_diff);
-        let reconstructed_cigar =
-            variable_tracepoints_to_cigar(&variable_tracepoints, a_seq, b_seq, 0, 0, &distance);
+        let variable_tracepoints =
+            cigar_to_variable_tracepoints(original_cigar, max_diff, ComplexityMetric::EditDistance);
+        let reconstructed_cigar = variable_tracepoints_to_cigar(
+            &variable_tracepoints,
+            a_seq,
+            b_seq,
+            0,
+            0,
+            ComplexityMetric::EditDistance,
+            &distance,
+        );
         assert_eq!(
             reconstructed_cigar, original_cigar,
             "Variable tracepoint roundtrip failed"
@@ -1657,7 +1670,8 @@ mod tests {
         let max_diff = 5;
 
         // Create variable tracepoints
-        let variable_tracepoints = cigar_to_variable_tracepoints(original_cigar, max_diff);
+        let variable_tracepoints =
+            cigar_to_variable_tracepoints(original_cigar, max_diff, ComplexityMetric::EditDistance);
 
         let distance = Distance::GapAffine2p {
             mismatch: 2,
@@ -1666,7 +1680,7 @@ mod tests {
             gap_opening2: 6,
             gap_extension2: 1,
         };
-        let aligner = distance.create_aligner(None);
+        let mut aligner = distance.create_aligner(None);
 
         // Test the new function
         let reconstructed_cigar = variable_tracepoints_to_cigar_with_aligner(
@@ -1675,12 +1689,22 @@ mod tests {
             b_seq,
             0,
             0,
-            &aligner,
+            ComplexityMetric::EditDistance,
+            &mut aligner,
+            false,
+            0,
         );
 
         // Should produce the same result
-        let expected_cigar =
-            variable_tracepoints_to_cigar(&variable_tracepoints, a_seq, b_seq, 0, 0, &distance);
+        let expected_cigar = variable_tracepoints_to_cigar(
+            &variable_tracepoints,
+            a_seq,
+            b_seq,
+            0,
+            0,
+            ComplexityMetric::EditDistance,
+            &distance,
+        );
 
         assert_eq!(
             reconstructed_cigar, expected_cigar,
@@ -1699,11 +1723,21 @@ mod tests {
             b_seq,
             0,
             0,
-            &aligner,
+            ComplexityMetric::EditDistance,
+            &mut aligner,
+            false,
+            0,
         );
 
-        let expected_cigar2 =
-            variable_tracepoints_to_cigar(&variable_tracepoints2, a_seq, b_seq, 0, 0, &distance);
+        let expected_cigar2 = variable_tracepoints_to_cigar(
+            &variable_tracepoints2,
+            a_seq,
+            b_seq,
+            0,
+            0,
+            ComplexityMetric::EditDistance,
+            &distance,
+        );
 
         assert_eq!(
             reconstructed_cigar2, expected_cigar2,
@@ -1760,7 +1794,8 @@ mod tests {
 
         // Run each test case
         for (i, (max_diff, expected_tracepoints)) in test_cases.iter().enumerate() {
-            let tracepoints = cigar_to_tracepoints_raw(cigar, *max_diff);
+            let tracepoints =
+                cigar_to_tracepoints_raw(cigar, *max_diff, ComplexityMetric::EditDistance);
             assert_eq!(
                 tracepoints,
                 *expected_tracepoints,
@@ -1778,9 +1813,9 @@ mod tests {
         let max_diff = 5;
 
         // Regular mode: indels larger than max_diff become their own segments
-        let regular = cigar_to_tracepoints(cigar, max_diff);
+        let regular = cigar_to_tracepoints(cigar, max_diff, ComplexityMetric::EditDistance);
         // Raw mode: indels are split into max_diff-sized chunks
-        let raw = cigar_to_tracepoints_raw(cigar, max_diff);
+        let raw = cigar_to_tracepoints_raw(cigar, max_diff, ComplexityMetric::EditDistance);
 
         // Regular mode should keep large indels intact
         assert_eq!(regular, vec![(5, 5), (8, 0), (3, 3), (0, 7), (2, 2)]);
@@ -1796,7 +1831,8 @@ mod tests {
         let cigar = "3S5=6I2=4D1H";
         let max_diff = 3;
 
-        let mixed_raw = cigar_to_mixed_tracepoints_raw(cigar, max_diff);
+        let mixed_raw =
+            cigar_to_mixed_tracepoints_raw(cigar, max_diff, ComplexityMetric::EditDistance);
 
         assert_eq!(
             mixed_raw,
@@ -1817,7 +1853,8 @@ mod tests {
         let cigar = "3=6I3=6D3=";
         let max_diff = 3;
 
-        let variable_raw = cigar_to_variable_tracepoints_raw(cigar, max_diff);
+        let variable_raw =
+            cigar_to_variable_tracepoints_raw(cigar, max_diff, ComplexityMetric::EditDistance);
 
         // With raw mode, indels combine with adjacent matches
         assert_eq!(
@@ -1851,9 +1888,17 @@ mod tests {
         };
 
         // Test raw tracepoints roundtrip
-        let raw_tracepoints = cigar_to_tracepoints_raw(original_cigar, max_diff);
-        let reconstructed_cigar =
-            tracepoints_to_cigar(&raw_tracepoints, a_seq, b_seq, 0, 0, &distance);
+        let raw_tracepoints =
+            cigar_to_tracepoints_raw(original_cigar, max_diff, ComplexityMetric::EditDistance);
+        let reconstructed_cigar = tracepoints_to_cigar(
+            &raw_tracepoints,
+            a_seq,
+            b_seq,
+            0,
+            0,
+            ComplexityMetric::EditDistance,
+            &distance,
+        );
 
         // The reconstructed CIGAR might be slightly different due to realignment,
         // but should represent the same alignment
@@ -1881,7 +1926,7 @@ mod tests {
         ];
 
         for (i, (cigar, max_diff, expected)) in test_cases.iter().enumerate() {
-            let result = cigar_to_tracepoints_raw(cigar, *max_diff);
+            let result = cigar_to_tracepoints_raw(cigar, *max_diff, ComplexityMetric::EditDistance);
             assert_eq!(
                 result,
                 *expected,
@@ -1970,7 +2015,8 @@ mod tests {
 
         // Run each test case
         for (i, (max_diff, expected_tracepoints)) in test_cases.iter().enumerate() {
-            let tracepoints = cigar_to_tracepoints_diagonal(cigar, *max_diff);
+            let tracepoints =
+                cigar_to_tracepoints(cigar, *max_diff, ComplexityMetric::DiagonalDistance);
             assert_eq!(
                 tracepoints,
                 *expected_tracepoints,
@@ -1994,8 +2040,10 @@ mod tests {
         ];
 
         for (cigar, max_diff) in test_cases {
-            let regular_tracepoints = cigar_to_tracepoints(cigar, max_diff);
-            let diagonal_tracepoints = cigar_to_tracepoints_diagonal(cigar, max_diff);
+            let regular_tracepoints =
+                cigar_to_tracepoints(cigar, max_diff, ComplexityMetric::EditDistance);
+            let diagonal_tracepoints =
+                cigar_to_tracepoints(cigar, max_diff, ComplexityMetric::DiagonalDistance);
 
             println!("CIGAR: {cigar}, max_diff: {max_diff}");
             println!("Regular: {regular_tracepoints:?}");
@@ -2042,7 +2090,8 @@ mod tests {
         ];
 
         for (i, (cigar, max_diff, expected)) in test_cases.iter().enumerate() {
-            let result = cigar_to_mixed_tracepoints_diagonal(cigar, *max_diff);
+            let result =
+                cigar_to_mixed_tracepoints(cigar, *max_diff, ComplexityMetric::DiagonalDistance);
             assert_eq!(
                 result,
                 *expected,
@@ -2060,7 +2109,8 @@ mod tests {
         let cigar = "3=4I3=4D3=";
         let max_diff = 3;
 
-        let variable_diagonal = cigar_to_variable_tracepoints_diagonal(cigar, max_diff);
+        let variable_diagonal =
+            cigar_to_variable_tracepoints(cigar, max_diff, ComplexityMetric::DiagonalDistance);
 
         // Expected: with max_diff=3, the 4I exceeds limit, so we get separate segments
         // Then after reset, 3=4D balances but 4D by itself exceeds max_diff
@@ -2103,7 +2153,7 @@ mod tests {
         ];
 
         for (i, (cigar, max_diff, expected)) in test_cases.iter().enumerate() {
-            let result = cigar_to_tracepoints_diagonal(cigar, *max_diff);
+            let result = cigar_to_tracepoints(cigar, *max_diff, ComplexityMetric::DiagonalDistance);
             assert_eq!(
                 result,
                 *expected,
@@ -2130,7 +2180,7 @@ mod tests {
         ];
 
         for (i, (cigar, max_diff, expected)) in test_cases.iter().enumerate() {
-            let result = cigar_to_tracepoints_diagonal(cigar, *max_diff);
+            let result = cigar_to_tracepoints(cigar, *max_diff, ComplexityMetric::DiagonalDistance);
             assert_eq!(
                 result,
                 *expected,
@@ -2151,7 +2201,8 @@ mod tests {
         let max_diff = 2;
 
         // Generate diagonal tracepoints
-        let diagonal_tracepoints = cigar_to_tracepoints_diagonal(original_cigar, max_diff);
+        let diagonal_tracepoints =
+            cigar_to_tracepoints(original_cigar, max_diff, ComplexityMetric::DiagonalDistance);
 
         let distance = Distance::GapAffine2p {
             mismatch: 2,
@@ -2162,8 +2213,15 @@ mod tests {
         };
 
         // Verify they can be reconstructed
-        let reconstructed_cigar =
-            tracepoints_to_cigar(&diagonal_tracepoints, a_seq, b_seq, 0, 0, &distance);
+        let reconstructed_cigar = tracepoints_to_cigar(
+            &diagonal_tracepoints,
+            a_seq,
+            b_seq,
+            0,
+            0,
+            ComplexityMetric::DiagonalDistance,
+            &distance,
+        );
 
         // Should not be empty and should represent a valid alignment
         assert!(

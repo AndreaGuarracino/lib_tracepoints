@@ -841,8 +841,8 @@ fn compute_banded_static_strategy(
                 b_len - a_len
             };
             let available = max_value.saturating_sub(delta);
-            let seg_band = available / 2;
-            seg_band as i32
+            let seg_band = available.div_ceil(2); // To have seg_band 1 if available is 1
+            (seg_band + delta) as i32
         }
         ComplexityMetric::DiagonalDistance => max_value as i32,
     };

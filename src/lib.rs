@@ -833,22 +833,27 @@ fn compute_banded_static_strategy(
     metric: ComplexityMetric,
     max_value: usize,
 ) -> HeuristicStrategy {
-    let band_width: i32 = match metric {
+    let (band_min_k, band_max_k) = match metric {
         ComplexityMetric::EditDistance => {
-            let delta = if a_len > b_len {
-                a_len - b_len
+            let delta_abs = a_len.abs_diff(b_len);
+            let available = max_value.saturating_sub(delta_abs);
+            let seg_band = available.div_ceil(2);
+
+            let (band_min_k, band_max_k) = if a_len >= b_len {
+                (-(seg_band as i32), (seg_band + delta_abs) as i32)
             } else {
-                b_len - a_len
+                (-((seg_band + delta_abs) as i32), seg_band as i32)
             };
-            let available = max_value.saturating_sub(delta);
-            let seg_band = available.div_ceil(2); // To have seg_band 1 if available is 1
-            (seg_band + delta) as i32
+            (band_min_k, band_max_k)
         }
-        ComplexityMetric::DiagonalDistance => max_value as i32,
+        ComplexityMetric::DiagonalDistance => {
+            let band_width = max_value as i32;
+            (-band_width, band_width)
+        }
     };
     HeuristicStrategy::BandedStatic {
-        band_min_k: -band_width,
-        band_max_k: band_width,
+        band_min_k,
+        band_max_k,
     }
 }
 

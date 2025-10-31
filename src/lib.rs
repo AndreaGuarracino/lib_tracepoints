@@ -839,12 +839,11 @@ fn compute_banded_static_strategy(
             let available = max_value.saturating_sub(delta_abs);
             let seg_band = available.div_ceil(2);
 
-            let (band_min_k, band_max_k) = if a_len >= b_len {
+            if a_len >= b_len {
                 (-(seg_band as i32), (seg_band + delta_abs) as i32)
             } else {
                 (-((seg_band + delta_abs) as i32), seg_band as i32)
-            };
-            (band_min_k, band_max_k)
+            }
         }
         ComplexityMetric::DiagonalDistance => {
             let band_width = max_value as i32;

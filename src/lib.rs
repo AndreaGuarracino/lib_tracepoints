@@ -4,12 +4,100 @@ pub use lib_wfa2::affine_wavefront::{
 use std::cmp::min;
 
 /// Metric selector for per-segment band computation used by heuristic alignment
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ComplexityMetric {
     /// Edit distance (count mismatches + insertions + deletions)
     EditDistance,
     /// Diagonal distance (distance from the main diagonal)
     DiagonalDistance,
+}
+
+impl ComplexityMetric {
+    /// Parse ComplexityMetric from string
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "edit-distance" => Ok(Self::EditDistance),
+            "diagonal-distance" => Ok(Self::DiagonalDistance),
+            _ => Err(format!("Invalid complexity metric '{}'. Expected 'edit-distance' or 'diagonal-distance'", s)),
+        }
+    }
+
+    /// Convert ComplexityMetric to string representation
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::EditDistance => "edit-distance",
+            Self::DiagonalDistance => "diagonal-distance",
+        }
+    }
+}
+
+impl std::fmt::Display for ComplexityMetric {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Tracepoint storage type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TracepointType {
+    /// Standard tracepoints: (a_len, b_len) pairs
+    Standard,
+    /// Mixed representation with special CIGAR operations preserved
+    Mixed,
+    /// Variable tracepoints: (length, None) when equal, otherwise (a_len, Some(b_len))
+    Variable,
+    /// FastGA tracepoints with CIGAR processing state
+    Fastga,
+}
+
+impl TracepointType {
+    /// Convert to u8 for binary serialization
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            Self::Standard => 0,
+            Self::Mixed => 1,
+            Self::Variable => 2,
+            Self::Fastga => 3,
+        }
+    }
+
+    /// Parse from u8 for binary deserialization
+    pub fn from_u8(byte: u8) -> Result<Self, String> {
+        match byte {
+            0 => Ok(Self::Standard),
+            1 => Ok(Self::Mixed),
+            2 => Ok(Self::Variable),
+            3 => Ok(Self::Fastga),
+            _ => Err(format!("Invalid tracepoint type byte: {}", byte)),
+        }
+    }
+
+    /// Parse from string representation
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "standard" => Ok(Self::Standard),
+            "mixed" => Ok(Self::Mixed),
+            "variable" => Ok(Self::Variable),
+            "fastga" => Ok(Self::Fastga),
+            _ => Err(format!("Invalid tracepoint type '{}'. Expected 'standard', 'mixed', 'variable', or 'fastga'", s)),
+        }
+    }
+
+    /// Convert to string representation
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Mixed => "mixed",
+            Self::Variable => "variable",
+            Self::Fastga => "fastga",
+        }
+    }
+}
+
+impl std::fmt::Display for TracepointType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
 }
 
 /// Represents a CIGAR segment that can be either aligned or preserved as-is

@@ -18,7 +18,10 @@ impl ComplexityMetric {
         match s {
             "edit-distance" => Ok(Self::EditDistance),
             "diagonal-distance" => Ok(Self::DiagonalDistance),
-            _ => Err(format!("Invalid complexity metric '{}'. Expected 'edit-distance' or 'diagonal-distance'", s)),
+            _ => Err(format!(
+                "Invalid complexity metric '{}'. Expected 'edit-distance' or 'diagonal-distance'",
+                s
+            )),
         }
     }
 

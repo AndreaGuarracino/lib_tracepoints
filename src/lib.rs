@@ -13,6 +13,23 @@ pub enum ComplexityMetric {
 }
 
 impl ComplexityMetric {
+    /// Convert to u8 for binary serialization
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            Self::EditDistance => 0,
+            Self::DiagonalDistance => 1,
+        }
+    }
+
+    /// Parse from u8 for binary deserialization
+    pub fn from_u8(byte: u8) -> Result<Self, String> {
+        match byte {
+            0 => Ok(Self::EditDistance),
+            1 => Ok(Self::DiagonalDistance),
+            _ => Err(format!("Invalid complexity metric byte: {}", byte)),
+        }
+    }
+
     /// Parse ComplexityMetric from string
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s {

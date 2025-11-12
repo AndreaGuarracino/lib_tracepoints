@@ -1420,20 +1420,20 @@ mod tests {
     #[test]
     fn test_tp_tag_formatting() {
         let standard = TracepointData::Standard(vec![(3, 5), (0, 2)]);
-        assert_eq!(standard.to_string(), "3,5;0,2");
+        assert_eq!(standard.to_tp_tag(), "3,5;0,2");
 
         let fastga = TracepointData::Fastga(vec![(1, 1)]);
-        assert_eq!(fastga.to_string(), "1,1");
+        assert_eq!(fastga.to_tp_tag(), "1,1");
 
         let variable = TracepointData::Variable(vec![(5, None), (3, Some(2))]);
-        assert_eq!(variable.to_string(), "5;3,2");
+        assert_eq!(variable.to_tp_tag(), "5;3,2");
 
         let mixed = TracepointData::Mixed(vec![
             MixedRepresentation::Tracepoint(4, 4),
             MixedRepresentation::CigarOp(2, 'I'),
             MixedRepresentation::Tracepoint(1, 3),
         ]);
-        assert_eq!(mixed.to_string(), "4,4;2I;1,3");
+        assert_eq!(mixed.to_tp_tag(), "4,4;2I;1,3");
     }
 
     #[test]

@@ -32,7 +32,7 @@ impl ComplexityMetric {
 
     /// Parse ComplexityMetric from string
     pub fn from_str(s: &str) -> Result<Self, String> {
-        match s {
+        match s.to_ascii_lowercase().as_str() {
             "edit-distance" => Ok(Self::EditDistance),
             "diagonal-distance" => Ok(Self::DiagonalDistance),
             _ => Err(format!(
@@ -92,6 +92,18 @@ impl TracepointType {
         }
     }
 
+    /// Parse from string representation (case-insensitive)
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        match s.to_ascii_lowercase().as_str() {
+            "standard" => Ok(Self::Standard),
+            "mixed" => Ok(Self::Mixed),
+            "variable" => Ok(Self::Variable),
+            "fastga" => Ok(Self::Fastga),
+            _ => Err(format!("Invalid tracepoint type '{}'. Expected 'standard', 'mixed', 'variable', or 'fastga'", s)),
+        }
+    }
+
+    /// Convert to string representation
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Standard => "standard",

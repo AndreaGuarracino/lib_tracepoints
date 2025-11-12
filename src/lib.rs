@@ -132,6 +132,33 @@ impl TracepointData {
             Self::Fastga(_) => TracepointType::Fastga,
         }
     }
+
+    /// Convert tracepoints into the textual representation used in `tp:Z` PAF tags.
+    pub fn to_tp_tag(&self) -> String {
+        match self {
+            Self::Standard(tps) | Self::Fastga(tps) => tps
+                .iter()
+                .map(|(a, b)| format!("{},{}", a, b))
+                .collect::<Vec<_>>()
+                .join(";"),
+            Self::Variable(tps) => tps
+                .iter()
+                .map(|(a, b_opt)| match b_opt {
+                    Some(b) => format!("{},{}", a, b),
+                    None => format!("{}", a),
+                })
+                .collect::<Vec<_>>()
+                .join(";"),
+            Self::Mixed(items) => items
+                .iter()
+                .map(|item| match item {
+                    MixedRepresentation::Tracepoint(a, b) => format!("{},{}", a, b),
+                    MixedRepresentation::CigarOp(len, op) => format!("{}{}", len, op),
+                })
+                .collect::<Vec<_>>()
+                .join(";"),
+        }
+    }
 }
 
 /// Represents a CIGAR segment that can be either aligned or preserved as-is
@@ -1389,6 +1416,25 @@ pub fn tracepoints_to_cigar_fastga_with_aligner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_tp_tag_formatting() {
+        let standard = TracepointData::Standard(vec![(3, 5), (0, 2)]);
+        assert_eq!(standard.to_string(), "3,5;0,2");
+
+        let fastga = TracepointData::Fastga(vec![(1, 1)]);
+        assert_eq!(fastga.to_string(), "1,1");
+
+        let variable = TracepointData::Variable(vec![(5, None), (3, Some(2))]);
+        assert_eq!(variable.to_string(), "5;3,2");
+
+        let mixed = TracepointData::Mixed(vec![
+            MixedRepresentation::Tracepoint(4, 4),
+            MixedRepresentation::CigarOp(2, 'I'),
+            MixedRepresentation::Tracepoint(1, 3),
+        ]);
+        assert_eq!(mixed.to_string(), "4,4;2I;1,3");
+    }
 
     #[test]
     fn test_tracepoint_generation() {

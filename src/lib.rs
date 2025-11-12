@@ -32,7 +32,7 @@ impl ComplexityMetric {
 
     /// Parse ComplexityMetric from string
     pub fn from_str(s: &str) -> Result<Self, String> {
-        match s {
+        match s.to_ascii_lowercase().as_str() {
             "edit-distance" => Ok(Self::EditDistance),
             "diagonal-distance" => Ok(Self::DiagonalDistance),
             _ => Err(format!(
@@ -57,8 +57,8 @@ impl std::fmt::Display for ComplexityMetric {
     }
 }
 
-/// Tracepoint storage type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Tracepoint type discriminant (Copy, no heap allocation)
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TracepointType {
     /// Standard tracepoints: (a_len, b_len) pairs
     Standard,
@@ -92,9 +92,9 @@ impl TracepointType {
         }
     }
 
-    /// Parse from string representation
+    /// Parse from string representation (case-insensitive)
     pub fn from_str(s: &str) -> Result<Self, String> {
-        match s {
+        match s.to_ascii_lowercase().as_str() {
             "standard" => Ok(Self::Standard),
             "mixed" => Ok(Self::Mixed),
             "variable" => Ok(Self::Variable),
@@ -114,27 +114,33 @@ impl TracepointType {
     }
 }
 
-impl std::fmt::Display for TracepointType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
+/// Tracepoint data with associated Vec
+#[derive(Debug, Clone, PartialEq)]
+pub enum TracepointData {
+    Standard(Vec<(usize, usize)>),
+    Mixed(Vec<MixedRepresentation>),
+    Variable(Vec<(usize, Option<usize>)>),
+    Fastga(Vec<(usize, usize)>),
+}
+
+impl TracepointData {
+    pub fn tp_type(&self) -> TracepointType {
+        match self {
+            Self::Standard(_) => TracepointType::Standard,
+            Self::Mixed(_) => TracepointType::Mixed,
+            Self::Variable(_) => TracepointType::Variable,
+            Self::Fastga(_) => TracepointType::Fastga,
+        }
     }
 }
 
 /// Represents a CIGAR segment that can be either aligned or preserved as-is
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MixedRepresentation {
     /// Alignment segment represented by tracepoints
     Tracepoint(usize, usize),
     /// Special CIGAR operation that should be preserved intact
     CigarOp(usize, char),
-}
-
-/// Output type for tracepoint processing
-enum Tracepoints {
-    /// Standard tracepoints as (a_len, b_len) pairs
-    Standard(Vec<(usize, usize)>),
-    /// Mixed representation with special CIGAR operations preserved
-    Mixed(Vec<MixedRepresentation>),
 }
 
 /// Convert CIGAR string into standard tracepoints
@@ -149,7 +155,7 @@ pub fn cigar_to_tracepoints(
     metric: ComplexityMetric,
 ) -> Vec<(usize, usize)> {
     match process_cigar_segments(cigar, max_value, false, false, metric) {
-        Tracepoints::Standard(tracepoints) => tracepoints,
+        TracepointData::Standard(tracepoints) => tracepoints,
         _ => unreachable!(),
     }
 }
@@ -164,7 +170,7 @@ pub fn cigar_to_tracepoints_raw(
     metric: ComplexityMetric,
 ) -> Vec<(usize, usize)> {
     match process_cigar_segments(cigar, max_value, false, true, metric) {
-        Tracepoints::Standard(tracepoints) => tracepoints,
+        TracepointData::Standard(tracepoints) => tracepoints,
         _ => unreachable!(),
     }
 }
@@ -178,7 +184,7 @@ pub fn cigar_to_mixed_tracepoints(
     metric: ComplexityMetric,
 ) -> Vec<MixedRepresentation> {
     match process_cigar_segments(cigar, max_value, true, false, metric) {
-        Tracepoints::Mixed(tracepoints) => tracepoints,
+        TracepointData::Mixed(tracepoints) => tracepoints,
         _ => unreachable!(),
     }
 }
@@ -193,7 +199,7 @@ pub fn cigar_to_mixed_tracepoints_raw(
     metric: ComplexityMetric,
 ) -> Vec<MixedRepresentation> {
     match process_cigar_segments(cigar, max_value, true, true, metric) {
-        Tracepoints::Mixed(tracepoints) => tracepoints,
+        TracepointData::Mixed(tracepoints) => tracepoints,
         _ => unreachable!(),
     }
 }
@@ -401,7 +407,7 @@ fn process_cigar_segments(
     preserve_special: bool,
     allow_indel_split: bool,
     metric: ComplexityMetric,
-) -> Tracepoints {
+) -> TracepointData {
     match metric {
         ComplexityMetric::EditDistance => {
             process_cigar_edit_distance(cigar, max_value, preserve_special, allow_indel_split)
@@ -426,7 +432,7 @@ fn process_cigar_edit_distance(
     max_diff: usize,
     preserve_special: bool,
     allow_indel_split: bool,
-) -> Tracepoints {
+) -> TracepointData {
     let ops = cigar_str_to_cigar_ops(cigar);
     let mut standard_tracepoints = Vec::new();
     let mut mixed_tracepoints = Vec::new();
@@ -563,9 +569,9 @@ fn process_cigar_edit_distance(
     );
 
     if preserve_special {
-        Tracepoints::Mixed(mixed_tracepoints)
+        TracepointData::Mixed(mixed_tracepoints)
     } else {
-        Tracepoints::Standard(standard_tracepoints)
+        TracepointData::Standard(standard_tracepoints)
     }
 }
 
@@ -578,7 +584,7 @@ fn process_cigar_diagonal_distance(
     cigar: &str,
     max_dist: usize,
     preserve_special: bool,
-) -> Tracepoints {
+) -> TracepointData {
     let ops = cigar_str_to_cigar_ops(cigar);
     let mut standard_tracepoints = Vec::new();
     let mut mixed_tracepoints = Vec::new();
@@ -687,9 +693,9 @@ fn process_cigar_diagonal_distance(
     );
 
     if preserve_special {
-        Tracepoints::Mixed(mixed_tracepoints)
+        TracepointData::Mixed(mixed_tracepoints)
     } else {
-        Tracepoints::Standard(standard_tracepoints)
+        TracepointData::Standard(standard_tracepoints)
     }
 }
 
@@ -762,13 +768,13 @@ fn reconstruct_cigar_from_mixed_segments(
             MixedRepresentation::Tracepoint(a_len, b_len) => {
                 if *a_len > 0 && *b_len == 0 {
                     cigar_ops.push((*a_len, 'I'));
-                    current_a += a_len;
+                    current_a += *a_len;
                 } else if *b_len > 0 && *a_len == 0 {
                     cigar_ops.push((*b_len, 'D'));
-                    current_b += b_len;
+                    current_b += *b_len;
                 } else {
-                    let a_end = current_a + a_len;
-                    let b_end = current_b + b_len;
+                    let a_end = current_a + *a_len;
+                    let b_end = current_b + *b_len;
                     if apply_heuristic {
                         let strategy =
                             compute_banded_static_strategy(*a_len, *b_len, metric, max_value);

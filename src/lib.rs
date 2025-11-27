@@ -1025,6 +1025,9 @@ pub fn cigar_to_tracepoints_fastga(
     let mut state = None;
     let mut current_query_start = query_start;
     let mut current_target_start = target_start;
+    // For complement, we need to track target_end in reversed space after first iteration
+    let mut current_target_end = target_end;
+    let mut is_first_segment = true;
 
     loop {
         let (tracepoints, new_state) = cigar_to_tracepoints_fastga_with_overflow(
@@ -1033,22 +1036,37 @@ pub fn cigar_to_tracepoints_fastga(
             current_query_start,
             query_end,
             current_target_start,
-            target_end,
+            current_target_end,
             target_len,
             complement,
             state,
         );
 
         // Store the segment with its coordinate bounds
+        // For complement, target coordinates from the inner function are in reversed space.
+        // The first segment's start needs to be converted from original to reversed space.
+        let seg_target_start = if complement && is_first_segment {
+            // First segment: convert original target_start to reversed space
+            target_len - target_end
+        } else {
+            // Subsequent segments: already in reversed space from previous iteration
+            current_target_start
+        };
         results.push((
             tracepoints,
             (
                 current_query_start,
                 new_state.query_pos,
-                current_target_start,
+                seg_target_start,
                 new_state.target_pos,
             ),
         ));
+
+        // After first segment, switch target_end to reversed space for complement
+        if is_first_segment && complement {
+            current_target_end = target_len - target_start;
+        }
+        is_first_segment = false;
 
         if new_state.completed {
             break;
@@ -1062,7 +1080,13 @@ pub fn cigar_to_tracepoints_fastga(
         if new_state.remaining_len > 0 {
             // This would be handled by the gap processing in the C code
             // For now, we advance positions to skip the problematic operation
-            let ops = cigar_str_to_cigar_ops(cigar);
+            // For complement, the cigar_pos refers to the REVERSED CIGAR
+            let cigar_to_parse = if complement {
+                reverse_cigar(cigar)
+            } else {
+                cigar.to_string()
+            };
+            let ops = cigar_str_to_cigar_ops(&cigar_to_parse);
             if new_state.cigar_pos < ops.len() {
                 let (_, op) = ops[new_state.cigar_pos];
                 match op {
@@ -1102,12 +1126,18 @@ fn cigar_to_tracepoints_fastga_with_overflow(
     state: Option<CigarProcessingState>,
 ) -> (Vec<(usize, usize)>, CigarProcessingState) {
     // FASTGA reverses the target coordinates and CIGAR for complement alignments
-    let (target_start, target_end, cigar) = if complement {
+    // BUT only on the first call (state is None). On continuation calls, coordinates
+    // are already in reversed space.
+    let is_first_call = state.is_none();
+    let (target_start, target_end, cigar) = if complement && is_first_call {
         (
             target_len - target_end,
             target_len - target_start,
             reverse_cigar(cigar),
         )
+    } else if complement {
+        // Continuation: coordinates already reversed, but still need reversed CIGAR
+        (target_start, target_end, reverse_cigar(cigar))
     } else {
         (target_start, target_end, cigar.to_string())
     };
@@ -1206,11 +1236,13 @@ fn cigar_to_tracepoints_fastga_with_overflow(
                 'I' => {
                     // Check for overflow - if insertion would cause trace point overflow
                     if trace_spacing + len > 200 {
-                        // Emit current tracepoint and stop processing
-                        tracepoints.push((
-                            (diff - last_diff).unsigned_abs() as usize,
-                            b_pos - last_b_pos,
-                        ));
+                        // Push final tracepoint if we've passed the last boundary (matching C behavior)
+                        if a_pos > next_trace - trace_spacing {
+                            tracepoints.push((
+                                (diff - last_diff).unsigned_abs() as usize,
+                                b_pos - last_b_pos,
+                            ));
+                        }
 
                         return (
                             tracepoints,
@@ -1245,11 +1277,13 @@ fn cigar_to_tracepoints_fastga_with_overflow(
                 'D' => {
                     // Check for overflow - if deletion would cause trace point overflow
                     if (b_pos - last_b_pos) + len + (next_trace - a_pos) > 200 {
-                        // Emit current tracepoint and stop processing
-                        tracepoints.push((
-                            (diff - last_diff).unsigned_abs() as usize,
-                            b_pos - last_b_pos,
-                        ));
+                        // Push final tracepoint if we've passed the last boundary (matching C behavior)
+                        if a_pos > next_trace - trace_spacing {
+                            tracepoints.push((
+                                (diff - last_diff).unsigned_abs() as usize,
+                                b_pos - last_b_pos,
+                            ));
+                        }
 
                         return (
                             tracepoints,

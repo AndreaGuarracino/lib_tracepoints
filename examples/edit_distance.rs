@@ -1,4 +1,4 @@
-use lib_tracepoints::{cigar_to_tracepoints, tracepoints_to_cigar, ComplexityMetric, Distance};
+use tracepoints::{cigar_to_tracepoints, tracepoints_to_cigar, ComplexityMetric, Distance};
 
 fn main() {
     let cigar = "5=1I5=";

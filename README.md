@@ -1,10 +1,10 @@
-# lib_tracepoints
+# tracepoints
 
 A library for sequence alignment compression and reconstruction using tracepoints.
 
 ## Overview
 
-`lib_tracepoints` provides utilities for converting between CIGAR strings and tracepoint representations for efficient alignment storage. The library enables:
+`tracepoints` provides utilities for converting between CIGAR strings and tracepoint representations for efficient alignment storage. The library enables:
 
 - Converting CIGAR strings to tracepoints
 - Reconstructing CIGAR strings from tracepoints
@@ -15,7 +15,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-lib_tracepoints = { git = "https://github.com/AndreaGuarracino/lib_tracepoints" }
+tracepoints = { git = "https://github.com/AndreaGuarracino/tracepoints" }
 ```
 
 Then simply build your project:

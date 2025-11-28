@@ -1,11 +1,11 @@
 [package]
-name = "lib_tracepoints"
+name = "tracepoints"
 version = "0.1.0"
 edition = "2021"
 authors = ["Andrea Guarracino <aguarra1@uthsc.edu>"]
 license = "MIT"
 description = "Compressed alignment representation"
-repository = "https://github.com/AndreaGuarracino/lib_tracepoints"
+repository = "https://github.com/AndreaGuarracino/tracepoints"
 readme = "README.md"
 keywords = ["bioinformatics", "alignment", "compression"]
 categories = ["science"]

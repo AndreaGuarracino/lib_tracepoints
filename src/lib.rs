@@ -999,12 +999,54 @@ fn compute_banded_static_strategy(
 
 // FASTGA
 
+/// Skip initial CIGAR operations until target_pos > 0 and current op is diagonal.
+/// This matches FASTGA's cigarPrefix behavior for complement alignments.
+///
+/// Returns (op_index, remaining_len, query_pos, target_pos) for where to start processing.
+fn skip_prefix_for_complement(
+    ops: &[(usize, char)],
+    mut query_pos: usize,
+    mut target_pos: usize,
+) -> (usize, usize, usize, usize) {
+    for (op_index, &(len, op)) in ops.iter().enumerate() {
+        match op {
+            // Match/mismatch operations
+            '=' | 'M' | 'X' => {
+                // Check if we should stop: target position must be positive
+                // (query_pos is always >= 0 for usize, so we only check target_pos)
+                if target_pos > 0 {
+                    // Found our starting point - return with full len remaining
+                    return (op_index, len, query_pos, target_pos);
+                }
+                // Consume the operation
+                query_pos += len;
+                target_pos += len;
+            }
+            // Deletion - consume (advances target only)
+            'D' | 'N' => {
+                target_pos += len;
+            }
+            // Insertion - consume (advances query only)
+            'I' => {
+                query_pos += len;
+            }
+            // Skip special operations
+            'H' | 'S' | 'P' => {}
+            _ => {}
+        }
+    }
+    // If we processed all ops, return end state
+    (ops.len(), 0, query_pos, target_pos)
+}
+
 pub struct CigarProcessingState {
     pub cigar_pos: usize,     // Position in CIGAR string
     pub remaining_len: usize, // Remaining length of current operation
     pub query_pos: usize,     // Current query position
     pub target_pos: usize,    // Current target position
     pub completed: bool,      // Whether entire CIGAR was processed
+    pub actual_query_start: usize,  // Actual starting query position (after prefix skip)
+    pub actual_target_start: usize, // Actual starting target position (after prefix skip)
 }
 
 /// Convert CIGAR string into FASTGA-style tracepoints
@@ -1043,21 +1085,13 @@ pub fn cigar_to_tracepoints_fastga(
         );
 
         // Store the segment with its coordinate bounds
-        // For complement, target coordinates from the inner function are in reversed space.
-        // The first segment's start needs to be converted from original to reversed space.
-        let seg_target_start = if complement && is_first_segment {
-            // First segment: convert original target_start to reversed space
-            target_len - target_end
-        } else {
-            // Subsequent segments: already in reversed space from previous iteration
-            current_target_start
-        };
+        // Use the actual start positions which account for any prefix skip (for complement alignments)
         results.push((
             tracepoints,
             (
-                current_query_start,
+                new_state.actual_query_start,
                 new_state.query_pos,
-                seg_target_start,
+                new_state.actual_target_start,
                 new_state.target_pos,
             ),
         ));
@@ -1106,6 +1140,8 @@ pub fn cigar_to_tracepoints_fastga(
             query_pos: current_query_start,
             target_pos: current_target_start,
             completed: false,
+            actual_query_start: current_query_start,
+            actual_target_start: current_target_start,
         });
     }
 
@@ -1148,9 +1184,18 @@ fn cigar_to_tracepoints_fastga_with_overflow(
     // Initialize state from previous processing or start fresh
     let (mut op_index, mut remaining_op_len, mut a_pos, mut b_pos) = if let Some(s) = state {
         (s.cigar_pos, s.remaining_len, s.query_pos, s.target_pos)
+    } else if complement && is_first_call && target_start == 0 {
+        // For complement alignments where target_start is 0 (reversed coords),
+        // skip initial CIGAR operations until target_pos > 0.
+        // This matches FASTGA's cigarPrefix behavior.
+        skip_prefix_for_complement(&ops, query_start, target_start)
     } else {
         (0, 0, query_start, target_start)
     };
+
+    // Save the actual starting positions (may differ from input due to prefix skip)
+    let actual_query_start = a_pos;
+    let actual_target_start = b_pos;
 
     let mut last_b_pos = b_pos;
     let mut diff = 0i64;
@@ -1176,6 +1221,8 @@ fn cigar_to_tracepoints_fastga_with_overflow(
                     query_pos: a_pos,
                     target_pos: b_pos,
                     completed: false,
+                    actual_query_start,
+                    actual_target_start,
                 },
             );
         }
@@ -1252,6 +1299,8 @@ fn cigar_to_tracepoints_fastga_with_overflow(
                                 query_pos: a_pos,
                                 target_pos: b_pos,
                                 completed: false,
+                                actual_query_start,
+                                actual_target_start,
                             },
                         );
                     }
@@ -1293,6 +1342,8 @@ fn cigar_to_tracepoints_fastga_with_overflow(
                                 query_pos: a_pos,
                                 target_pos: b_pos,
                                 completed: false,
+                                actual_query_start,
+                                actual_target_start,
                             },
                         );
                     }
@@ -1317,6 +1368,8 @@ fn cigar_to_tracepoints_fastga_with_overflow(
                     query_pos: a_pos,
                     target_pos: b_pos,
                     completed: false,
+                    actual_query_start,
+                    actual_target_start,
                 },
             );
         }
@@ -1340,6 +1393,8 @@ fn cigar_to_tracepoints_fastga_with_overflow(
             query_pos: a_pos,
             target_pos: b_pos,
             completed: true,
+            actual_query_start,
+            actual_target_start,
         },
     )
 }

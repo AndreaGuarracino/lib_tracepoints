@@ -1086,6 +1086,12 @@ pub fn cigar_to_tracepoints_fastga(
 
         // Store the segment with its coordinate bounds
         // Use the actual start positions which account for any prefix skip (for complement alignments)
+        // If cigarPrefix consumed everything, FASTGA outputs "0,0" - we do the same
+        let tracepoints = if tracepoints.is_empty() && new_state.completed {
+            vec![(0, 0)]
+        } else {
+            tracepoints
+        };
         results.push((
             tracepoints,
             (

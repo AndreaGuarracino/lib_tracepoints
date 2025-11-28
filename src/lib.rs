@@ -1182,12 +1182,12 @@ fn cigar_to_tracepoints_fastga_with_overflow(
     let mut tracepoints = Vec::new();
 
     // Initialize state from previous processing or start fresh
+    // For FASTGA mode: apply cigarPrefix logic to skip initial operations when target_start == 0
+    // This matches FASTGA's behavior where alignments starting at bpos=0 skip until bpos > 0
     let (mut op_index, mut remaining_op_len, mut a_pos, mut b_pos) = if let Some(s) = state {
         (s.cigar_pos, s.remaining_len, s.query_pos, s.target_pos)
-    } else if complement && is_first_call && target_start == 0 {
-        // For complement alignments where target_start is 0 (reversed coords),
-        // skip initial CIGAR operations until target_pos > 0.
-        // This matches FASTGA's cigarPrefix behavior.
+    } else if is_first_call && target_start == 0 {
+        // Apply cigarPrefix behavior: skip until we find a diagonal with target_pos > 0
         skip_prefix_for_complement(&ops, query_start, target_start)
     } else {
         (0, 0, query_start, target_start)

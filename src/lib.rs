@@ -1194,7 +1194,14 @@ fn cigar_to_tracepoints_fastga_with_overflow(
         (s.cigar_pos, s.remaining_len, s.query_pos, s.target_pos)
     } else if is_first_call && target_start == 0 {
         // Apply cigarPrefix behavior: skip until we find a diagonal with target_pos > 0
-        skip_prefix_for_complement(&ops, query_start, target_start)
+        let result = skip_prefix_for_complement(&ops, query_start, target_start);
+        // If cigarPrefix consumed the entire CIGAR (pure-match alignment), don't skip
+        // This fixes FASTGA's PAFtoALN bug that produces 0,0 for such alignments
+        if result.0 >= ops.len() {
+            (0, 0, query_start, target_start)
+        } else {
+            result
+        }
     } else {
         (0, 0, query_start, target_start)
     };

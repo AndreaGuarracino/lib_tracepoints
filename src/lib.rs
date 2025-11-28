@@ -178,10 +178,10 @@ pub enum MixedRepresentation {
 /// when using `ComplexityMetric::DiagonalDistance`.
 pub fn cigar_to_tracepoints(
     cigar: &str,
-    max_value: usize,
+    max_value: u32,
     metric: ComplexityMetric,
 ) -> Vec<(usize, usize)> {
-    match process_cigar_segments(cigar, max_value, false, false, metric) {
+    match process_cigar_segments(cigar, max_value as usize, false, false, metric) {
         TracepointData::Standard(tracepoints) => tracepoints,
         _ => unreachable!(),
     }
@@ -193,10 +193,10 @@ pub fn cigar_to_tracepoints(
 /// Currently only `ComplexityMetric::EditDistance` performs splitting.
 pub fn cigar_to_tracepoints_raw(
     cigar: &str,
-    max_value: usize,
+    max_value: u32,
     metric: ComplexityMetric,
 ) -> Vec<(usize, usize)> {
-    match process_cigar_segments(cigar, max_value, false, true, metric) {
+    match process_cigar_segments(cigar, max_value as usize, false, true, metric) {
         TracepointData::Standard(tracepoints) => tracepoints,
         _ => unreachable!(),
     }
@@ -207,10 +207,10 @@ pub fn cigar_to_tracepoints_raw(
 /// Like `cigar_to_tracepoints` but preserves special operations (H, N, P, S).
 pub fn cigar_to_mixed_tracepoints(
     cigar: &str,
-    max_value: usize,
+    max_value: u32,
     metric: ComplexityMetric,
 ) -> Vec<MixedRepresentation> {
-    match process_cigar_segments(cigar, max_value, true, false, metric) {
+    match process_cigar_segments(cigar, max_value as usize, true, false, metric) {
         TracepointData::Mixed(tracepoints) => tracepoints,
         _ => unreachable!(),
     }
@@ -222,10 +222,10 @@ pub fn cigar_to_mixed_tracepoints(
 /// Currently only `ComplexityMetric::EditDistance` performs splitting.
 pub fn cigar_to_mixed_tracepoints_raw(
     cigar: &str,
-    max_value: usize,
+    max_value: u32,
     metric: ComplexityMetric,
 ) -> Vec<MixedRepresentation> {
-    match process_cigar_segments(cigar, max_value, true, true, metric) {
+    match process_cigar_segments(cigar, max_value as usize, true, true, metric) {
         TracepointData::Mixed(tracepoints) => tracepoints,
         _ => unreachable!(),
     }
@@ -236,7 +236,7 @@ pub fn cigar_to_mixed_tracepoints_raw(
 /// Uses (length, None) when a_len == b_len, otherwise (a_len, Some(b_len)).
 pub fn cigar_to_variable_tracepoints(
     cigar: &str,
-    max_value: usize,
+    max_value: u32,
     metric: ComplexityMetric,
 ) -> Vec<(usize, Option<usize>)> {
     to_variable_format(cigar_to_tracepoints(cigar, max_value, metric))
@@ -248,7 +248,7 @@ pub fn cigar_to_variable_tracepoints(
 /// Currently only `ComplexityMetric::EditDistance` performs splitting.
 pub fn cigar_to_variable_tracepoints_raw(
     cigar: &str,
-    max_value: usize,
+    max_value: u32,
     metric: ComplexityMetric,
 ) -> Vec<(usize, Option<usize>)> {
     to_variable_format(cigar_to_tracepoints_raw(cigar, max_value, metric))
@@ -290,7 +290,7 @@ pub fn tracepoints_to_cigar_with_aligner(
     metric: ComplexityMetric,
     aligner: &mut AffineWavefronts,
     apply_heuristic: bool,
-    max_value: usize,
+    max_value: u32,
 ) -> String {
     reconstruct_cigar_from_segments(
         tracepoints,
@@ -341,7 +341,7 @@ pub fn mixed_tracepoints_to_cigar_with_aligner(
     metric: ComplexityMetric,
     aligner: &mut AffineWavefronts,
     apply_heuristic: bool,
-    max_value: usize,
+    max_value: u32,
 ) -> String {
     reconstruct_cigar_from_mixed_segments(
         mixed_tracepoints,
@@ -393,7 +393,7 @@ pub fn variable_tracepoints_to_cigar_with_aligner(
     metric: ComplexityMetric,
     aligner: &mut AffineWavefronts,
     apply_heuristic: bool,
-    max_value: usize,
+    max_value: u32,
 ) -> String {
     let regular_tracepoints = from_variable_format(variable_tracepoints);
     reconstruct_cigar_from_segments(
@@ -736,7 +736,7 @@ fn reconstruct_cigar_from_segments(
     metric: ComplexityMetric,
     aligner: &mut AffineWavefronts,
     apply_heuristic: bool,
-    max_value: usize,
+    max_value: u32,
 ) -> String {
     let mut cigar_ops = Vec::new();
     let mut current_a = a_start;
@@ -783,7 +783,7 @@ fn reconstruct_cigar_from_mixed_segments(
     metric: ComplexityMetric,
     aligner: &mut AffineWavefronts,
     apply_heuristic: bool,
-    max_value: usize,
+    max_value: u32,
 ) -> String {
     let mut cigar_ops = Vec::new();
     let mut current_a = a_start;
@@ -972,11 +972,11 @@ fn compute_banded_static_strategy(
     a_len: usize,
     b_len: usize,
     metric: ComplexityMetric,
-    max_value: usize,
+    max_value: u32,
 ) -> HeuristicStrategy {
     let (band_min_k, band_max_k) = match metric {
         ComplexityMetric::EditDistance => {
-            let delta_abs = a_len.abs_diff(b_len);
+            let delta_abs = a_len.abs_diff(b_len) as u32;
             let available = max_value.saturating_sub(delta_abs);
             let seg_band = available.div_ceil(2);
 
@@ -1054,7 +1054,7 @@ pub struct CigarProcessingState {
 /// Segments CIGAR into sets of tracepoints, breaking when indels would cause tracepoint overflow.
 pub fn cigar_to_tracepoints_fastga(
     cigar: &str,
-    trace_spacing: usize,
+    trace_spacing: u32,
     query_start: usize,
     query_end: usize,
     _query_len: usize,
@@ -1158,7 +1158,7 @@ pub fn cigar_to_tracepoints_fastga(
 /// It stops processing if an indel would cause tracepoint overflow.
 fn cigar_to_tracepoints_fastga_with_overflow(
     cigar: &str,
-    trace_spacing: usize,
+    trace_spacing: u32,
     query_start: usize,
     query_end: usize,
     target_start: usize,
@@ -1167,6 +1167,8 @@ fn cigar_to_tracepoints_fastga_with_overflow(
     complement: bool,
     state: Option<CigarProcessingState>,
 ) -> (Vec<(usize, usize)>, CigarProcessingState) {
+    let trace_spacing = trace_spacing as usize;
+
     // FASTGA reverses the target coordinates and CIGAR for complement alignments
     // BUT only on the first call (state is None). On continuation calls, coordinates
     // are already in reversed space.
@@ -1417,7 +1419,7 @@ fn cigar_to_tracepoints_fastga_with_overflow(
 /// Uses edit distance internally for alignment.
 pub fn tracepoints_to_cigar_fastga(
     segments: &[(usize, usize)],
-    trace_spacing: usize,
+    trace_spacing: u32,
     a_seq: &[u8],
     b_seq: &[u8],
     a_start: usize,
@@ -1445,7 +1447,7 @@ pub fn tracepoints_to_cigar_fastga(
 /// Like `tracepoints_to_cigar_fastga`, but allows callers to reuse an existing aligner.
 pub fn tracepoints_to_cigar_fastga_with_aligner(
     segments: &[(usize, usize)],
-    trace_spacing: usize,
+    trace_spacing: u32,
     a_seq: &[u8],
     b_seq: &[u8],
     a_start: usize,
@@ -1453,6 +1455,8 @@ pub fn tracepoints_to_cigar_fastga_with_aligner(
     complement: bool,
     aligner: &AffineWavefronts,
 ) -> String {
+    let trace_spacing = trace_spacing as usize;
+
     let mut cigar_ops = Vec::new();
 
     // Starting positions in the sequences

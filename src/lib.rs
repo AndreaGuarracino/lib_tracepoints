@@ -1040,11 +1040,11 @@ fn skip_prefix_for_complement(
 }
 
 pub struct CigarProcessingState {
-    pub cigar_pos: usize,     // Position in CIGAR string
-    pub remaining_len: usize, // Remaining length of current operation
-    pub query_pos: usize,     // Current query position
-    pub target_pos: usize,    // Current target position
-    pub completed: bool,      // Whether entire CIGAR was processed
+    pub cigar_pos: usize,           // Position in CIGAR string
+    pub remaining_len: usize,       // Remaining length of current operation
+    pub query_pos: usize,           // Current query position
+    pub target_pos: usize,          // Current target position
+    pub completed: bool,            // Whether entire CIGAR was processed
     pub actual_query_start: usize,  // Actual starting query position (after prefix skip)
     pub actual_target_start: usize, // Actual starting target position (after prefix skip)
 }

@@ -159,6 +159,15 @@ impl TracepointData {
                 .join(";"),
         }
     }
+
+    /// Check if the tracepoint data is empty
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Standard(tps) | Self::Fastga(tps) => tps.is_empty(),
+            Self::Variable(tps) => tps.is_empty(),
+            Self::Mixed(items) => items.is_empty(),
+        }
+    }
 }
 
 /// Represents a CIGAR segment that can be either aligned or preserved as-is

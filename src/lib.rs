@@ -273,7 +273,7 @@ pub fn tracepoints_to_cigar(
     metric: ComplexityMetric,
     distance: &Distance,
 ) -> String {
-    let mut aligner = distance.create_aligner(None);
+    let mut aligner = distance.create_aligner(None, None);
     tracepoints_to_cigar_with_aligner(
         tracepoints,
         a_seq,
@@ -324,7 +324,7 @@ pub fn mixed_tracepoints_to_cigar(
     metric: ComplexityMetric,
     distance: &Distance,
 ) -> String {
-    let mut aligner = distance.create_aligner(None);
+    let mut aligner = distance.create_aligner(None, None);
     mixed_tracepoints_to_cigar_with_aligner(
         mixed_tracepoints,
         a_seq,
@@ -376,7 +376,7 @@ pub fn variable_tracepoints_to_cigar(
     distance: &Distance,
 ) -> String {
     let regular_tracepoints = from_variable_format(variable_tracepoints);
-    let mut aligner = distance.create_aligner(None);
+    let mut aligner = distance.create_aligner(None, None);
     reconstruct_cigar_from_segments(
         &regular_tracepoints,
         a_seq,
@@ -1438,7 +1438,7 @@ pub fn tracepoints_to_cigar_fastga(
     // Use edit distance mode as FASTGA does
     let distance = Distance::Edit;
 
-    let mut aligner = distance.create_aligner(None);
+    let mut aligner = distance.create_aligner(None, None);
     tracepoints_to_cigar_fastga_with_aligner(
         segments,
         trace_spacing,
@@ -1959,7 +1959,7 @@ mod tests {
             gap_opening2: 6,
             gap_extension2: 1,
         };
-        let mut aligner = distance.create_aligner(None);
+        let mut aligner = distance.create_aligner(None, None);
 
         // Test the new function
         let reconstructed_cigar = variable_tracepoints_to_cigar_with_aligner(

@@ -987,7 +987,7 @@ fn compute_banded_static_strategy(
         ComplexityMetric::EditDistance => {
             let delta_abs = a_len.abs_diff(b_len) as u32;
             let available = max_value.saturating_sub(delta_abs);
-            let seg_band = available.div_ceil(2);
+            let seg_band = available.div_ceil(2) + 1;
 
             if a_len >= b_len {
                 (-(seg_band as i32), (seg_band + delta_abs) as i32)

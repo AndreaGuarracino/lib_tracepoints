@@ -273,7 +273,7 @@ pub fn tracepoints_to_cigar(
     metric: ComplexityMetric,
     distance: &Distance,
 ) -> String {
-    let mut aligner = distance.create_aligner(None);
+    let mut aligner = distance.create_aligner(None, None);
     tracepoints_to_cigar_with_aligner(
         tracepoints,
         a_seq,
@@ -282,14 +282,14 @@ pub fn tracepoints_to_cigar(
         b_start,
         metric,
         &mut aligner,
-        false,
-        0,
+        None,
     )
 }
 
 /// Reconstruct CIGAR string from standard tracepoints with provided aligner
 ///
 /// Like `tracepoints_to_cigar`, but allows callers to reuse an existing aligner.
+/// Pass `Some(max_value)` to enable banded alignment heuristics; pass `None` to disable.
 pub fn tracepoints_to_cigar_with_aligner(
     tracepoints: &[(usize, usize)],
     a_seq: &[u8],
@@ -298,8 +298,7 @@ pub fn tracepoints_to_cigar_with_aligner(
     b_start: usize,
     metric: ComplexityMetric,
     aligner: &mut AffineWavefronts,
-    apply_heuristic: bool,
-    max_value: u32,
+    max_value: Option<u32>,
 ) -> String {
     reconstruct_cigar_from_segments(
         tracepoints,
@@ -309,7 +308,6 @@ pub fn tracepoints_to_cigar_with_aligner(
         b_start,
         metric,
         aligner,
-        apply_heuristic,
         max_value,
     )
 }
@@ -324,7 +322,7 @@ pub fn mixed_tracepoints_to_cigar(
     metric: ComplexityMetric,
     distance: &Distance,
 ) -> String {
-    let mut aligner = distance.create_aligner(None);
+    let mut aligner = distance.create_aligner(None, None);
     mixed_tracepoints_to_cigar_with_aligner(
         mixed_tracepoints,
         a_seq,
@@ -333,14 +331,14 @@ pub fn mixed_tracepoints_to_cigar(
         b_start,
         metric,
         &mut aligner,
-        false,
-        0,
+        None,
     )
 }
 
 /// Reconstruct CIGAR string from mixed tracepoints with provided aligner
 ///
 /// Like `mixed_tracepoints_to_cigar`, but allows callers to reuse an existing aligner.
+/// Pass `Some(max_value)` to enable banded alignment heuristics; pass `None` to disable.
 pub fn mixed_tracepoints_to_cigar_with_aligner(
     mixed_tracepoints: &[MixedRepresentation],
     a_seq: &[u8],
@@ -349,8 +347,7 @@ pub fn mixed_tracepoints_to_cigar_with_aligner(
     b_start: usize,
     metric: ComplexityMetric,
     aligner: &mut AffineWavefronts,
-    apply_heuristic: bool,
-    max_value: u32,
+    max_value: Option<u32>,
 ) -> String {
     reconstruct_cigar_from_mixed_segments(
         mixed_tracepoints,
@@ -360,7 +357,6 @@ pub fn mixed_tracepoints_to_cigar_with_aligner(
         b_start,
         metric,
         aligner,
-        apply_heuristic,
         max_value,
     )
 }
@@ -376,7 +372,7 @@ pub fn variable_tracepoints_to_cigar(
     distance: &Distance,
 ) -> String {
     let regular_tracepoints = from_variable_format(variable_tracepoints);
-    let mut aligner = distance.create_aligner(None);
+    let mut aligner = distance.create_aligner(None, None);
     reconstruct_cigar_from_segments(
         &regular_tracepoints,
         a_seq,
@@ -385,14 +381,14 @@ pub fn variable_tracepoints_to_cigar(
         b_start,
         metric,
         &mut aligner,
-        false,
-        0,
+        None,
     )
 }
 
 /// Reconstruct CIGAR string from variable tracepoints with provided aligner
 ///
 /// Like `variable_tracepoints_to_cigar`, but allows callers to reuse an existing aligner.
+/// Pass `Some(max_value)` to enable banded alignment heuristics; pass `None` to disable.
 pub fn variable_tracepoints_to_cigar_with_aligner(
     variable_tracepoints: &[(usize, Option<usize>)],
     a_seq: &[u8],
@@ -401,8 +397,7 @@ pub fn variable_tracepoints_to_cigar_with_aligner(
     b_start: usize,
     metric: ComplexityMetric,
     aligner: &mut AffineWavefronts,
-    apply_heuristic: bool,
-    max_value: u32,
+    max_value: Option<u32>,
 ) -> String {
     let regular_tracepoints = from_variable_format(variable_tracepoints);
     reconstruct_cigar_from_segments(
@@ -413,14 +408,11 @@ pub fn variable_tracepoints_to_cigar_with_aligner(
         b_start,
         metric,
         aligner,
-        apply_heuristic,
         max_value,
     )
 }
 
 /// Align two sequence segments using WFA algorithm
-///
-
 pub fn align_sequences_wfa(
     query: &[u8],
     target: &[u8],
@@ -744,8 +736,7 @@ fn reconstruct_cigar_from_segments(
     b_start: usize,
     metric: ComplexityMetric,
     aligner: &mut AffineWavefronts,
-    apply_heuristic: bool,
-    max_value: u32,
+    max_value: Option<u32>,
 ) -> String {
     let mut cigar_ops = Vec::new();
     let mut current_a = a_start;
@@ -764,8 +755,9 @@ fn reconstruct_cigar_from_segments(
             // Mixed segment - realign with WFA
             let a_end = current_a + a_len;
             let b_end = current_b + b_len;
-            if apply_heuristic {
-                let strategy = compute_banded_static_strategy(a_len, b_len, metric, max_value);
+            if let Some(mv) = max_value {
+                let strategy =
+                    compute_banded_static_strategy(a_len, b_len, metric, mv, &aligner.get_distance());
                 aligner.set_heuristic(Some(&strategy));
             }
             let seg_ops = align_sequences_wfa(
@@ -791,8 +783,7 @@ fn reconstruct_cigar_from_mixed_segments(
     b_start: usize,
     metric: ComplexityMetric,
     aligner: &mut AffineWavefronts,
-    apply_heuristic: bool,
-    max_value: u32,
+    max_value: Option<u32>,
 ) -> String {
     let mut cigar_ops = Vec::new();
     let mut current_a = a_start;
@@ -811,9 +802,14 @@ fn reconstruct_cigar_from_mixed_segments(
                 } else {
                     let a_end = current_a + *a_len;
                     let b_end = current_b + *b_len;
-                    if apply_heuristic {
-                        let strategy =
-                            compute_banded_static_strategy(*a_len, *b_len, metric, max_value);
+                    if let Some(mv) = max_value {
+                        let strategy = compute_banded_static_strategy(
+                            *a_len,
+                            *b_len,
+                            metric,
+                            mv,
+                            &aligner.get_distance(),
+                        );
                         aligner.set_heuristic(Some(&strategy));
                     }
                     let seg_ops = align_sequences_wfa(
@@ -982,12 +978,20 @@ fn compute_banded_static_strategy(
     b_len: usize,
     metric: ComplexityMetric,
     max_value: u32,
+    distance: &Distance,
 ) -> HeuristicStrategy {
     let (band_min_k, band_max_k) = match metric {
         ComplexityMetric::EditDistance => {
             let delta_abs = a_len.abs_diff(b_len) as u32;
             let available = max_value.saturating_sub(delta_abs);
-            let seg_band = available.div_ceil(2);
+            let seg_band = match distance {
+                Distance::Edit => {
+                    available.div_ceil(2)
+                }
+                Distance::GapAffine { .. } | Distance::GapAffine2p { .. } => {
+                    available.div_ceil(2).max(8)
+                }
+            };
 
             if a_len >= b_len {
                 (-(seg_band as i32), (seg_band + delta_abs) as i32)
@@ -1438,7 +1442,7 @@ pub fn tracepoints_to_cigar_fastga(
     // Use edit distance mode as FASTGA does
     let distance = Distance::Edit;
 
-    let mut aligner = distance.create_aligner(None);
+    let aligner = distance.create_aligner(None, None);
     tracepoints_to_cigar_fastga_with_aligner(
         segments,
         trace_spacing,
@@ -1447,7 +1451,7 @@ pub fn tracepoints_to_cigar_fastga(
         a_start,
         _b_start,
         complement,
-        &mut aligner,
+        &aligner,
     )
 }
 
@@ -1959,7 +1963,7 @@ mod tests {
             gap_opening2: 6,
             gap_extension2: 1,
         };
-        let mut aligner = distance.create_aligner(None);
+        let mut aligner = distance.create_aligner(None, None);
 
         // Test the new function
         let reconstructed_cigar = variable_tracepoints_to_cigar_with_aligner(
@@ -1970,8 +1974,7 @@ mod tests {
             0,
             ComplexityMetric::EditDistance,
             &mut aligner,
-            false,
-            0,
+            None,
         );
 
         // Should produce the same result
@@ -2004,8 +2007,7 @@ mod tests {
             0,
             ComplexityMetric::EditDistance,
             &mut aligner,
-            false,
-            0,
+            None,
         );
 
         let expected_cigar2 = variable_tracepoints_to_cigar(

@@ -12,4 +12,4 @@ categories = ["science"]
 
 [dependencies]
 #lib_wfa2 = { path = "/home/guarracino/Dropbox/git/lib_wfa2"}
-lib_wfa2 = { git = "https://github.com/AndreaGuarracino/lib_wfa2"}
+lib_wfa2 = { git = "https://github.com/AndreaGuarracino/lib_wfa2", rev = "0fe1ebfb7a364226f3d8d7b84b703611168435c6"}

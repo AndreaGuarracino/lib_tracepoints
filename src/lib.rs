@@ -413,8 +413,6 @@ pub fn variable_tracepoints_to_cigar_with_aligner(
 }
 
 /// Align two sequence segments using WFA algorithm
-///
-
 pub fn align_sequences_wfa(
     query: &[u8],
     target: &[u8],
@@ -1444,7 +1442,7 @@ pub fn tracepoints_to_cigar_fastga(
     // Use edit distance mode as FASTGA does
     let distance = Distance::Edit;
 
-    let mut aligner = distance.create_aligner(None, None);
+    let aligner = distance.create_aligner(None, None);
     tracepoints_to_cigar_fastga_with_aligner(
         segments,
         trace_spacing,
@@ -1453,7 +1451,7 @@ pub fn tracepoints_to_cigar_fastga(
         a_start,
         _b_start,
         complement,
-        &mut aligner,
+        &aligner,
     )
 }
 

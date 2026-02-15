@@ -1438,11 +1438,12 @@ pub fn tracepoints_to_cigar_fastga(
     a_start: usize,
     _b_start: usize,
     complement: bool,
+    heuristic: bool,
 ) -> String {
     // Use edit distance mode as FASTGA does
     let distance = Distance::Edit;
 
-    let aligner = distance.create_aligner(None, None);
+    let mut aligner = distance.create_aligner(None, None);
     tracepoints_to_cigar_fastga_with_aligner(
         segments,
         trace_spacing,
@@ -1451,7 +1452,8 @@ pub fn tracepoints_to_cigar_fastga(
         a_start,
         _b_start,
         complement,
-        &aligner,
+        &mut aligner,
+        heuristic,
     )
 }
 
@@ -1466,7 +1468,8 @@ pub fn tracepoints_to_cigar_fastga_with_aligner(
     a_start: usize,
     _b_start: usize,
     complement: bool,
-    aligner: &AffineWavefronts,
+    aligner: &mut AffineWavefronts,
+    heuristic: bool,
 ) -> String {
     let trace_spacing = trace_spacing as usize;
 
@@ -1509,6 +1512,16 @@ pub fn tracepoints_to_cigar_fastga_with_aligner(
                 cigar_ops.push((a_end - current_a, '='));
             } else {
                 // Mixed segment - realign with WFA
+                if heuristic && num_diff > 0 {
+                    let strategy = compute_banded_static_strategy(
+                        a_end - current_a,
+                        b_end - current_b,
+                        ComplexityMetric::EditDistance,
+                        num_diff as u32,
+                        &aligner.get_distance(),
+                    );
+                    aligner.set_heuristic(Some(&strategy));
+                }
                 let seg_ops = align_sequences_wfa(
                     &a_seq[current_a..a_end],
                     &b_seq[current_b..b_end],

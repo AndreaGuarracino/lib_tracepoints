@@ -9,6 +9,12 @@ A library for sequence alignment compression and reconstruction using tracepoint
 - Converting CIGAR strings to tracepoints
 - Reconstructing CIGAR strings from tracepoints
 
+### What are tracepoints?
+
+Rather than storing every alignment operation in a full CIGAR string, tracepoints record a sparse set of coordinate pairs along the alignment path. Each pair of consecutive tracepoints defines a short subalignment interval whose CIGAR can be reconstructed on-demand by re-aligning the corresponding sequence segments with WFA.
+
+This library implements **adaptive tracepoints**: instead of segmenting at fixed intervals, it segments based on local alignment complexity, creating larger segments in conserved regions and smaller ones in divergent regions. Reconstruction from adaptive tracepoints guarantees identical or improved alignment scores, never worse.
+
 ## Installation
 
 Add this to your `Cargo.toml`:
@@ -26,9 +32,12 @@ cargo build --release
 
 ## Features
 
-- **Tracepoints**: Simple `(a_len, b_len)` pairs for each segment
-- **CIGAR reconstruction**: Efficient conversion from tracepoints back to CIGAR strings using WFA alignment
-- **Distance modes**: Support for both affine gap penalties and edit distance
+- **Tracepoint types**:
+  - **Standard**: `(a_len, b_len)` pairs for each segment
+  - **FastGA**: Fixed-spacing tracepoints compatible with the FastGA aligner
+- **Complexity metrics**: `EditDistance` (count of mismatches + indels) and `DiagonalDistance` (max diagonal shift within a segment)
+- **CIGAR reconstruction**: Conversion from tracepoints back to CIGAR strings using WFA alignment
+- **Distance modes**: Support for edit distance, gap-affine, and dual gap-affine penalties
 
 ## Usage
 
